@@ -1,48 +1,39 @@
-import os
+import importlib
 import torch
-from model import Transformer, Informer, Reformer, Flowformer, Flashformer, \
-    iTransformer, iInformer, iReformer, iFlowformer, iFlashformer, DLinear, NLinear, Autoformer, Linear, MLP, SOFTS
+
+from utils.device import resolve_device
+
+
+def _load_model_class(model_name: str):
+    """Import only the requested model module (avoids loading all optional deps)."""
+    try:
+        module = importlib.import_module(f"model.{model_name}")
+    except ModuleNotFoundError as exc:
+        raise ValueError(f"Unknown or unavailable model '{model_name}'") from exc
+    if not hasattr(module, "Model"):
+        raise ValueError(f"Model module 'model.{model_name}' has no Model class")
+    return module.Model
 
 
 class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
-        self.model_dict = {
-            'Transformer': Transformer,
-            'Informer': Informer,
-            'Reformer': Reformer,
-            'Flowformer': Flowformer,
-            'Flashformer': Flashformer,
-            'iTransformer': iTransformer,
-            'iInformer': iInformer,
-            'iReformer': iReformer,
-            'iFlowformer': iFlowformer,
-            'iFlashformer': iFlashformer,
-            'Autoformer': Autoformer,
-            'Transformer': Transformer,
-            'Informer': Informer,
-            'DLinear': DLinear,
-            'NLinear': NLinear,
-            'Linear': Linear,
-            'MLP': MLP,
-            'SOFTS': SOFTS
-        }
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)
 
     def _build_model(self):
-        raise NotImplementedError
-        return None
+        Model = _load_model_class(self.args.model)
+        return Model(self.args).float()
 
     def _acquire_device(self):
-        if self.args.use_gpu:
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(
-                self.args.gpu) if not self.args.use_multi_gpu else self.args.devices
-            device = torch.device('cuda:{}'.format(self.args.gpu))
-            print('Use GPU: cuda:{}'.format(self.args.gpu))
+        if hasattr(self.args, "device"):
+            device = self.args.device
         else:
-            device = torch.device('cpu')
-            print('Use CPU')
+            device = resolve_device(
+                use_gpu=getattr(self.args, "use_gpu", True),
+                gpu=getattr(self.args, "gpu", 0),
+            )
+        print(f"Use device: {device}")
         return device
 
     def _get_data(self):

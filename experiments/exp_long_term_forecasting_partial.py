@@ -2,6 +2,7 @@ from data_provider.data_factory import data_provider
 from experiments.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
+from utils.device import autocast_context, get_grad_scaler, amp_enabled
 import torch
 import torch.nn as nn
 from torch import optim
@@ -23,7 +24,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         super(Exp_Long_Term_Forecast_Partial, self).__init__(args)
 
     def _build_model(self):
-        model = self.model_dict[self.args.model].Model(self.args).float()
+        model = super()._build_model()
 
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
@@ -66,8 +67,8 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -122,8 +123,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         criterion = self._select_criterion()
 
 
-        if self.args.use_amp:
-            scaler = torch.cuda.amp.GradScaler()
+        scaler = get_grad_scaler(self.device, self.args.use_amp)
 
         for epoch in range(self.args.train_epochs):
             iter_count = 0
@@ -163,8 +163,8 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -210,7 +210,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-                if self.args.use_amp:
+                if amp_enabled(self.device, self.args.use_amp):
                     scaler.scale(loss).backward()
                     scaler.step(model_optim)
                     scaler.update()
@@ -233,7 +233,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
         best_model_path = path + '/' + 'checkpoint.pth'
-        self.model.load_state_dict(torch.load(best_model_path))
+        self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
 
         return self.model
 
@@ -242,7 +242,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
+            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth'), map_location=self.device))
 
         preds = []
         trues = []
@@ -267,8 +267,8 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -350,7 +350,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         if load:
             path = os.path.join(self.args.checkpoints, setting)
             best_model_path = path + '/' + 'checkpoint.pth'
-            self.model.load_state_dict(torch.load(best_model_path))
+            self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
 
         preds = []
 
@@ -366,8 +366,8 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:

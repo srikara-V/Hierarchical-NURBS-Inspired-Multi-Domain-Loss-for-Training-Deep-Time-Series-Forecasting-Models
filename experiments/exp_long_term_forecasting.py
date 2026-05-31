@@ -4,10 +4,14 @@ from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
 from utils.tildeq import tildeq_loss
 from utils.mssd import MSSD
+from utils.device import autocast_context, get_grad_scaler, amp_enabled
+from utils.experiment_paths import checkpoint_dir, checkpoint_path
+from utils.training_state import clear_training_state, load_training_state, save_training_state
 import torch
 import torch.nn as nn
 from torch import optim
 import os
+import signal
 import time
 import warnings
 import numpy as np
@@ -16,11 +20,19 @@ warnings.filterwarnings('ignore')
 
 
 class Exp_Long_Term_Forecast(Exp_Basic):
+    _interrupt_requested = False
+
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
+        signal.signal(signal.SIGINT, self._handle_interrupt)
+
+    @classmethod
+    def _handle_interrupt(cls, signum, frame):
+        cls._interrupt_requested = True
+        print("\nInterrupt received — finishing current step and saving resume state...")
 
     def _build_model(self):
-        model = self.model_dict[self.args.model].Model(self.args).float()
+        model = super()._build_model()
 
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
@@ -40,9 +52,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             criterion = nn.MSELoss()
         elif loss.lower() == 'mssd':
             criterion = MSSD(
-                num_variables=self.args.enc_in, 
-                sequence_length=self.args.seq_len, 
-                exponent=self.args.spline_criterion_exponent, 
+                num_variables=self.args.enc_in,
+                sequence_length=self.args.pred_len,
+                exponent=self.args.spline_criterion_exponent,
                 knot_scaling_factor=self.args.knot_multiplier,
                 alpha=self.args.alpha,
                 beta=self.args.beta,
@@ -50,9 +62,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 max_levels=self.args.max_levels
                 )
         elif loss.lower() == "tildeq":
-            criterion = lambda x,y: tildeq_loss(x,y)
+            criterion = lambda x, y: tildeq_loss(x, y)
         else:
-            assert 0 == 1, "--loss should be either MSE or MSSD"
+            raise ValueError(f"Unsupported loss '{loss}'. Use one of: mse, mssd, tildeq")
         return criterion
 
     def vali(self, vali_data, vali_loader, criterion):
@@ -73,8 +85,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -98,14 +110,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model.train()
         return total_loss
 
-    def train(self, setting):
+    def train(self, setting, resume=True):
+        Exp_Long_Term_Forecast._interrupt_requested = False
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
 
-        path = os.path.join(self.args.checkpoints, setting)
-        if not os.path.exists(path):
-            os.makedirs(path)
+        path = checkpoint_dir(setting, self.args.checkpoints)
+        os.makedirs(path, exist_ok=True)
 
         time_now = time.time()
 
@@ -118,16 +130,45 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if self.args.loss.lower() == 'mssd':
             criterion.set_norm_params([train_loader])
 
-        if self.args.use_amp:
-            scaler = torch.cuda.amp.GradScaler()
+        scaler = get_grad_scaler(self.device, self.args.use_amp)
+        start_epoch = 0
 
-        for epoch in range(self.args.train_epochs):
+        if resume:
+            saved = load_training_state(
+                setting,
+                optimizer=model_optim,
+                scaler=scaler,
+                checkpoints_dir=self.args.checkpoints,
+            )
+            if saved is not None:
+                start_epoch = int(saved["epoch"])
+                early_stopping.load_state_dict(saved["early_stopping"])
+                if os.path.isfile(checkpoint_path(setting, self.args.checkpoints)):
+                    self.model.load_state_dict(
+                        torch.load(
+                            checkpoint_path(setting, self.args.checkpoints),
+                            map_location=self.device,
+                        )
+                    )
+                print(f"Resuming training from epoch {start_epoch + 1}/{self.args.train_epochs}")
+
+        if start_epoch >= self.args.train_epochs:
+            best_model_path = checkpoint_path(setting, self.args.checkpoints)
+            self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+            clear_training_state(setting, checkpoints_dir=self.args.checkpoints)
+            return self.model
+
+        for epoch in range(start_epoch, self.args.train_epochs):
+            if Exp_Long_Term_Forecast._interrupt_requested:
+                break
             iter_count = 0
             train_loss = []
 
             self.model.train()
             epoch_time = time.time()
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+                if Exp_Long_Term_Forecast._interrupt_requested:
+                    break
                 iter_count += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
@@ -144,8 +185,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -176,13 +217,25 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-                if self.args.use_amp:
+                if scaler is not None:
                     scaler.scale(loss).backward()
                     scaler.step(model_optim)
                     scaler.update()
                 else:
                     loss.backward()
                     model_optim.step()
+
+            if Exp_Long_Term_Forecast._interrupt_requested:
+                save_training_state(
+                    setting,
+                    epoch=epoch,
+                    early_stopping_state=early_stopping.state_dict(),
+                    optimizer=model_optim,
+                    scaler=scaler,
+                    checkpoints_dir=self.args.checkpoints,
+                )
+                print(f"Saved resume state at epoch {epoch + 1}. Re-run the same command to continue.")
+                return self.model
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
@@ -198,10 +251,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
+            save_training_state(
+                setting,
+                epoch=epoch + 1,
+                early_stopping_state=early_stopping.state_dict(),
+                optimizer=model_optim,
+                scaler=scaler,
+                checkpoints_dir=self.args.checkpoints,
+            )
+
             # get_cka(self.args, setting, self.model, train_loader, self.device, epoch)
 
-        best_model_path = path + '/' + 'checkpoint.pth'
-        self.model.load_state_dict(torch.load(best_model_path))
+        if Exp_Long_Term_Forecast._interrupt_requested:
+            return self.model
+
+        best_model_path = checkpoint_path(setting, self.args.checkpoints)
+        self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+        clear_training_state(setting, checkpoints_dir=self.args.checkpoints)
 
         return self.model
 
@@ -209,7 +275,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
+            self.model.load_state_dict(
+                torch.load(checkpoint_path(setting, self.args.checkpoints), map_location=self.device)
+            )
 
         preds = []
         trues = []
@@ -234,8 +302,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -279,7 +347,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = './results/' + setting + '/'
+        folder_path = os.path.join(self.args.results_dir, setting) + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -305,7 +373,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if load:
             path = os.path.join(self.args.checkpoints, setting)
             best_model_path = path + '/' + 'checkpoint.pth'
-            self.model.load_state_dict(torch.load(best_model_path))
+            self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
 
         preds = []
 
@@ -321,8 +389,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if amp_enabled(self.device, self.args.use_amp):
+                    with autocast_context(self.device, self.args.use_amp):
                         if self.args.output_attention:
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                         else:
@@ -342,7 +410,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
 
         # result save
-        folder_path = './results/' + setting + '/'
+        folder_path = os.path.join(self.args.results_dir, setting) + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 

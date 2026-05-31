@@ -1,16 +1,26 @@
 import argparse
+import os
 import torch
 from experiments.exp_long_term_forecasting import Exp_Long_Term_Forecast
 from experiments.exp_long_term_forecasting_partial import Exp_Long_Term_Forecast_Partial
+from utils.config_defaults import apply_config_defaults
+from utils.device import configure_training_device, empty_device_cache
+from utils.experiment_paths import (
+    build_setting_name,
+    checkpoint_exists,
+    metrics_exist,
+    training_state_exists,
+)
 import random
 import numpy as np
 
-if __name__ == '__main__':
-    fix_seed = 2024
-    random.seed(fix_seed)
-    torch.manual_seed(fix_seed)
-    np.random.seed(fix_seed)
+def set_seed(seed):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
+
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='iTransformer')
 
     # basic config
@@ -29,6 +39,25 @@ if __name__ == '__main__':
     parser.add_argument('--freq', type=str, default='h',
                         help='freq for time features encoding, options:[s:secondly, t:minutely, h:hourly, d:daily, b:business days, w:weekly, m:monthly], you can also use more detailed freq like 15min or 3h')
     parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
+    parser.add_argument('--results_dir', type=str, default='./results/', help='directory for metrics.npy outputs')
+    parser.add_argument(
+        '--skip_if_done',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='skip train/test when metrics.npy already exists for this setting',
+    )
+    parser.add_argument(
+        '--resume',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='resume interrupted training from saved training_state.pth',
+    )
+    parser.add_argument(
+        '--recover',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='if training finished but metrics are missing, run test only',
+    )
 
     # forecasting task
     parser.add_argument('--seq_len', type=int, default=96, help='input sequence length')
@@ -53,6 +82,10 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.1, help='dropout')
     parser.add_argument('--embed', type=str, default='timeF',
                         help='time features encoding, options:[timeF, fixed, learned]')
+    parser.add_argument('--embed_type', type=int, default=0,
+                        help='embedding type for Autoformer (0=wo_pos default)')
+    parser.add_argument('--individual', action='store_true', default=False,
+                        help='use channel-independent linear layers for NLinear/Linear')
     parser.add_argument('--activation', type=str, default='gelu', help='activation')
     parser.add_argument('--output_attention', action='store_true', help='whether to output attention in ecoder')
     parser.add_argument('--do_predict', action='store_true', help='whether to predict unseen future data')
@@ -60,6 +93,7 @@ if __name__ == '__main__':
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
     parser.add_argument('--itr', type=int, default=1, help='experiments times')
+    parser.add_argument('--seed', type=int, default=2024, help='random seed (incremented for each itr run)')
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size of train input data')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
@@ -99,13 +133,8 @@ if __name__ == '__main__':
                                                                            'you can select [partial_start_index, min(enc_in + partial_start_index, N)]')
 
     args = parser.parse_args()
-    args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
-
-    if args.use_gpu and args.use_multi_gpu:
-        args.devices = args.devices.replace(' ', '')
-        device_ids = args.devices.split(',')
-        args.device_ids = [int(id_) for id_ in device_ids]
-        args.gpu = args.device_ids[0]
+    args = apply_config_defaults(args)
+    configure_training_device(args)
 
     print('Args in experiment:')
     print(args)
@@ -118,78 +147,45 @@ if __name__ == '__main__':
 
     if args.is_training:
         for ii in range(args.itr):
-            # setting record of experiments
-            setting = '{}_{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}_ls{}_kt{}_xp{}_a{}_b{}_g{}'.format(
-                args.model_id,
-                args.model,
-                args.data,
-                args.data_path.replace('.csv',''),
-                args.features,
-                args.seq_len,
-                args.label_len,
-                args.pred_len,
-                args.d_model,
-                args.n_heads,
-                args.e_layers,
-                args.d_layers,
-                args.d_ff,
-                args.factor,
-                args.embed,
-                args.distil,
-                args.des,
-                args.class_strategy,
-                ii, 
-                args.loss,
-                args.knot_multiplier,
-                args.spline_criterion_exponent,
-                args.alpha,
-                args.beta,
-                args.gamma
-                )
+            run_seed = args.seed + ii
+            set_seed(run_seed)
+            print(f'Using random seed: {run_seed}')
 
-            exp = Exp(args)  # set experiments
-            print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
-            exp.train(setting)
+            setting = build_setting_name(args, ii)
 
-            print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-            exp.test(setting)
+            if args.skip_if_done and metrics_exist(setting, args.results_dir):
+                print(f'>>>>>>>skip (already done): {setting}')
+                continue
+
+            exp = Exp(args)
+            if (
+                args.recover
+                and checkpoint_exists(setting, args.checkpoints)
+                and not training_state_exists(setting, args.checkpoints)
+                and not metrics_exist(setting, args.results_dir)
+            ):
+                print(f'>>>>>>>recover (test only): {setting}')
+                exp.test(setting, test=1)
+            else:
+                print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
+                exp.train(setting, resume=args.resume)
+
+                if getattr(Exp, "_interrupt_requested", False):
+                    print(f'Run interrupted; resume with the same command to continue: {setting}')
+                    break
+
+                print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+                exp.test(setting)
 
             if args.do_predict:
                 print('>>>>>>>predicting : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
                 exp.predict(setting, True)
 
-            torch.cuda.empty_cache()
+            empty_device_cache(args.device)
     else:
-        ii = 0
-        setting = '{}_{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}_ls{}_kt{}_xp{}_a{}_b{}_g{}'.format(
-            args.model_id,
-            args.model,
-            args.data,
-            args.feature,
-            args.data_path.replace('.csv',''),
-            args.seq_len,
-            args.label_len,
-            args.pred_len,
-            args.d_model,
-            args.n_heads,
-            args.e_layers,
-            args.d_layers,
-            args.d_ff,
-            args.factor,
-            args.embed,
-            args.distil,
-            args.des,
-            args.class_strategy, 
-            ii,
-            args.loss,
-            args.knot_multiplier,
-            args.spline_criterion_exponent,
-            args.alpha,
-            args.beta,
-            args.gamma
-            )
-
-        exp = Exp(args)  # set experiments
+        set_seed(args.seed)
+        setting = build_setting_name(args, 0)
+        exp = Exp(args)
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
         exp.test(setting, test=1)
-        torch.cuda.empty_cache()
+        empty_device_cache(args.device)

@@ -97,7 +97,6 @@ class MSSD(nn.Module):
         self.num_variables = num_variables
         self.sequence_length = sequence_length
         self.max_sum = sequence_length * 1
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.max_levels = max_levels
         self.alpha = alpha
         self.beta = beta
@@ -112,8 +111,9 @@ class MSSD(nn.Module):
         return (value - min_val) / (max_val - min_val + 1e-7)
     
     def compute_losses(self, y_pred, y_true):
-        y_true = y_true.to(self.device)
-        y_pred = y_pred.to(self.device)
+        device = y_pred.device
+        y_true = y_true.to(device)
+        y_pred = y_pred.to(device)
         
         deconstructed_true = windowed_average_decompose_time_series(
             y_true, self.cache, self.max_levels, window_size=self.window_size, 

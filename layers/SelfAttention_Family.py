@@ -3,7 +3,6 @@ import torch.nn as nn
 import numpy as np
 from math import sqrt
 from utils.masking import TriangularCausalMask, ProbMask
-from reformer_pytorch import LSHSelfAttention
 from einops import rearrange
 
 
@@ -57,12 +56,8 @@ class FlashAttention(nn.Module):
         EPSILON = 1e-10
         # mask = torch.randint(0, 2, (128, 8)).to(device='cuda')
         O = torch.zeros_like(Q, requires_grad=True)
-        l = torch.zeros(Q.shape[:-1])[..., None]
-        m = torch.ones(Q.shape[:-1])[..., None] * NEG_INF
-
-        O = O.to(device='cuda')
-        l = l.to(device='cuda')
-        m = m.to(device='cuda')
+        l = torch.zeros(Q.shape[:-1], device=Q.device)[..., None]
+        m = torch.ones(Q.shape[:-1], device=Q.device)[..., None] * NEG_INF
 
         Q_BLOCK_SIZE = min(BLOCK_SIZE, Q.shape[-1])
         KV_BLOCK_SIZE = BLOCK_SIZE
@@ -304,6 +299,8 @@ class ReformerLayer(nn.Module):
     def __init__(self, attention, d_model, n_heads, d_keys=None,
                  d_values=None, causal=False, bucket_size=4, n_hashes=4):
         super().__init__()
+        from reformer_pytorch import LSHSelfAttention
+
         self.bucket_size = bucket_size
         self.attn = LSHSelfAttention(
             dim=d_model,
