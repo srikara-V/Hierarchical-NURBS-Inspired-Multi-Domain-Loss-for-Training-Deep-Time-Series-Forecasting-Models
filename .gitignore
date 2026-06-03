@@ -131,3 +131,9 @@ dmypy.json
 .pyre/
 
 data/
+
+# Experiment artifacts (generated locally; too large for GitHub)
+checkpoints/
+results/
+test_results/
+.DS_Store
