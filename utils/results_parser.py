@@ -88,11 +88,11 @@ def collect_results(results_dir: str = "./results") -> pd.DataFrame:
     if not os.path.isdir(results_dir):
         return pd.DataFrame()
 
-    for folder_name in os.listdir(results_dir):
-        folder_path = os.path.join(results_dir, folder_name)
-        metrics_path = os.path.join(folder_path, "metrics.npy")
-        if not os.path.isdir(folder_path) or not os.path.exists(metrics_path):
+    for root, _, files in os.walk(results_dir):
+        if "metrics.npy" not in files:
             continue
+        folder_name = os.path.basename(root)
+        metrics_path = os.path.join(root, "metrics.npy")
 
         setting = parse_setting_name(folder_name)
         if setting is None:
@@ -110,6 +110,10 @@ def collect_results(results_dir: str = "./results") -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
+    # Drop duplicate settings (e.g. nested results/results/ from Modal download).
+    df = df.sort_values("mse").drop_duplicates(
+        subset=["model", "data", "pred_len", "loss"], keep="first"
+    )
     for col in ["pred_len", "ii"]:
         if col in df.columns:
             df[col] = df[col].astype(int)

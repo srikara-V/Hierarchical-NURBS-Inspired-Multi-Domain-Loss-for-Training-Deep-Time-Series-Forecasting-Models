@@ -3,6 +3,7 @@ from experiments.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
 from utils.device import autocast_context, get_grad_scaler, amp_enabled
+from utils.torch_io import torch_load
 import torch
 import torch.nn as nn
 from torch import optim
@@ -233,7 +234,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
         best_model_path = path + '/' + 'checkpoint.pth'
-        self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+        self.model.load_state_dict(torch_load(best_model_path, map_location=self.device))
 
         return self.model
 
@@ -242,7 +243,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth'), map_location=self.device))
+            self.model.load_state_dict(torch_load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth'), map_location=self.device))
 
         preds = []
         trues = []
@@ -350,7 +351,7 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         if load:
             path = os.path.join(self.args.checkpoints, setting)
             best_model_path = path + '/' + 'checkpoint.pth'
-            self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+            self.model.load_state_dict(torch_load(best_model_path, map_location=self.device))
 
         preds = []
 

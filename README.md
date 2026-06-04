@@ -141,7 +141,7 @@ python filltables.py --results_dir ./results --output ./tables/filled_tables.xls
 python filltables.py --dry_run
 
 # Only build tables from existing ./results (no training)
-python filltables.py --no_run_missing
+python filltables.py --no-run_missing
 ```
 
 This produces Excel sheets for **Table 2**, **Table 3**, **Table 4**, plus coverage and raw result summaries. Missing cells for models not in the repo (Time-LLM, PatchTST, TiDE, etc.) stay as `-` and are listed on the **SkippedJobs** sheet. Table 4 is always populated from the bundled MSSD hyperparameter configs. Use `--aggregate best` to pick the lowest-MSE run when multiple seeds exist.

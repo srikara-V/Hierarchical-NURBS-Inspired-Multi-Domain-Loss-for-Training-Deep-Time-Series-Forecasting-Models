@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from utils.experiment_paths import training_state_path
+from utils.torch_io import torch_load
 
 
 def save_training_state(
@@ -41,7 +42,7 @@ def load_training_state(
     if not os.path.isfile(path):
         return None
 
-    payload = torch.load(path, map_location="cpu")
+    payload = torch_load(path, map_location="cpu")
     optimizer_state = payload.get("optimizer")
     if optimizer_state:
         try:

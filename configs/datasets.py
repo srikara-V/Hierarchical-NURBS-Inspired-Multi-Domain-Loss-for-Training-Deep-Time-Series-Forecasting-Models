@@ -25,7 +25,7 @@ DATASETS: Dict[str, DatasetConfig] = {
         data_path="ETTm1.csv",
         data="ETTm1",
         enc_in=7,
-        freq="t",
+        freq="min",
     ),
     "ETTm2": DatasetConfig(
         name="ETTm2",
@@ -33,7 +33,7 @@ DATASETS: Dict[str, DatasetConfig] = {
         data_path="ETTm2.csv",
         data="ETTm2",
         enc_in=7,
-        freq="t",
+        freq="min",
     ),
     "ETTh1": DatasetConfig(
         name="ETTh1",

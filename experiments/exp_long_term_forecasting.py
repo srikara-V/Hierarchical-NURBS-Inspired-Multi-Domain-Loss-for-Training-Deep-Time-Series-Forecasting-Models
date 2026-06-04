@@ -7,6 +7,7 @@ from utils.mssd import MSSD
 from utils.device import autocast_context, get_grad_scaler, amp_enabled
 from utils.experiment_paths import checkpoint_dir, checkpoint_path
 from utils.training_state import clear_training_state, load_training_state, save_training_state
+from utils.torch_io import torch_load
 import torch
 import torch.nn as nn
 from torch import optim
@@ -145,7 +146,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 early_stopping.load_state_dict(saved["early_stopping"])
                 if os.path.isfile(checkpoint_path(setting, self.args.checkpoints)):
                     self.model.load_state_dict(
-                        torch.load(
+                        torch_load(
                             checkpoint_path(setting, self.args.checkpoints),
                             map_location=self.device,
                         )
@@ -154,7 +155,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         if start_epoch >= self.args.train_epochs:
             best_model_path = checkpoint_path(setting, self.args.checkpoints)
-            self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+            self.model.load_state_dict(torch_load(best_model_path, map_location=self.device))
             clear_training_state(setting, checkpoints_dir=self.args.checkpoints)
             return self.model
 
@@ -266,7 +267,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             return self.model
 
         best_model_path = checkpoint_path(setting, self.args.checkpoints)
-        self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+        self.model.load_state_dict(torch_load(best_model_path, map_location=self.device))
         clear_training_state(setting, checkpoints_dir=self.args.checkpoints)
 
         return self.model
@@ -276,7 +277,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if test:
             print('loading model')
             self.model.load_state_dict(
-                torch.load(checkpoint_path(setting, self.args.checkpoints), map_location=self.device)
+                torch_load(checkpoint_path(setting, self.args.checkpoints), map_location=self.device)
             )
 
         preds = []
@@ -373,7 +374,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if load:
             path = os.path.join(self.args.checkpoints, setting)
             best_model_path = path + '/' + 'checkpoint.pth'
-            self.model.load_state_dict(torch.load(best_model_path, map_location=self.device))
+            self.model.load_state_dict(torch_load(best_model_path, map_location=self.device))
 
         preds = []
 

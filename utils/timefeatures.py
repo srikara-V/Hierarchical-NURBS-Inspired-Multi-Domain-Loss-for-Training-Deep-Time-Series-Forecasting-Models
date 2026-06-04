@@ -87,6 +87,19 @@ class WeekOfYear(TimeFeature):
         return (index.isocalendar().week - 1) / 52.0 - 0.5
 
 
+def _normalize_freq_str(freq_str: str) -> str:
+    """Map legacy pandas frequency aliases to strings accepted by pandas 3+."""
+    aliases = {
+        "t": "min",
+        "T": "min",
+        "h": "h",
+        "H": "h",
+        "s": "s",
+        "S": "s",
+    }
+    return aliases.get(freq_str, freq_str)
+
+
 def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
     """
     Returns a list of time features that will be appropriate for the given frequency string.
@@ -121,7 +134,7 @@ def time_features_from_frequency_str(freq_str: str) -> List[TimeFeature]:
         ],
     }
 
-    offset = to_offset(freq_str)
+    offset = to_offset(_normalize_freq_str(freq_str))
 
     for offset_type, feature_classes in features_by_offsets.items():
         if isinstance(offset, offset_type):
