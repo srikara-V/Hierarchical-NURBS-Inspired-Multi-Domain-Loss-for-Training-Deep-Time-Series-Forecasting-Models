@@ -70,7 +70,7 @@ def nurbs_decompose_time_series(time_series, cache, max_levels: int=5, degree: i
         knots = torch.linspace(0, seq_length, num_knots, device=device)
         x = torch.arange(seq_length, dtype=torch.float32, device=device)
         
-        # Compute autocorrelation-based weights
+        # Regional weights from sliding-window variance (softmax)
         window_size = seq_length // num_knots
         weights = get_nurbs_weights(residual, window_size)
         

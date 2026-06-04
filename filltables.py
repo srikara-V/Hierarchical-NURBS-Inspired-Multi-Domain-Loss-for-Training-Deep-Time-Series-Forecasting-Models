@@ -62,7 +62,7 @@ INTERNAL_DATASET_KEYS = {
 
 LOSS_ALIASES = {
     "mse": "MSE",
-    "mssd": "MSSD",
+    "mssd": "MSSD",  # paper name: HNMD (Hierarchical NURBS-Inspired Multi-Domain Loss)
     "tildeq": "Tilde-Q",
 }
 

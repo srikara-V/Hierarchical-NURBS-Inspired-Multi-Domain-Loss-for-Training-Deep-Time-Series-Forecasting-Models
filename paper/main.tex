@@ -1,0 +1,861 @@
+\documentclass[11pt,twocolumn]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{times}
+\usepackage{geometry}
+\geometry{a4paper,margin=1in}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{xspace}
+\usepackage{natbib}
+\usepackage{float}
+\usepackage{rotating}
+\usepackage{placeins}
+
+
+
+\title{Hierarchical NURBS-Inspired Multi-Domain Loss for Training Deep Time-Series Forecasting Models [DRAFT / ONGOING]}
+
+\author{Jason Abohwo \\
+Yale University\\
+Connecticut, CT 06511, USA \\
+\texttt{Jason.Abohwo@Yale.edu}\\
+\and
+Srikara Vishnubhatla \\
+Yale University\\
+Connecticut, CT 06511, USA \\
+\texttt{Srikara.Vishnubhatla@Yale.edu}\\
+}
+
+\newcommand{\methodName}{HNMD\xspace}
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Time-series forecasting is a technique with applications in fields ranging from finance to transportation. Traditional loss functions, such as Mean Squared Error (MSE) and Mean Absolute Error (MAE) aim to minimize point-wise deviations between predicted and true values. However, these functions often fall short when capturing the periodic and spectral characteristics inherent in many time-series datasets. In this paper, we introduce Hierarchical NURBS-Inspired Multi-Domain Loss (\methodName), a novel loss function that, inspired by Non-Uniform Rational Basis Splines (NURBS), leverages weighted basis splines to form hierarchical time-series representations, which are then used in a loss function in spanning several domains(e.g: time domain, frequency domain). Our experimental results show that \methodName not only allows models to surpass their differently-trained counterparts on several benchmarks, but can improve accuracy for a fixed architecture when used as the training loss. On our completed MLP runs (look-back 96; horizons $\{96,192,336,720\}$), \methodName improves test MSE over MSE- and Tilde-Q-trained MLP baselines on most dataset averages where all three are reported; it does not outperform strong MSE-trained forecasters (e.g., PatchTST, RLinear) on every dataset.
+\end{abstract}
+
+\section{Introduction}
+Time-series forecasting (TSF) is a fundamental technique with applications in numerous industries, including finance, healthcare, retail, and transportation. As a result of the extensive utility of time-series forecasting, the area of research has seen significant progress through the decades, with models evolving from traditional statistical methods such as ARIMA \cite{arima} to deep-learning-based solutions (e.g. Transformers \cite{autoformer}, Recurrent Neural Networks \cite{rnn}). Multi-variate time-series forecasting is an extension of this task, in which
+
+One of the key challenges of time-series forecasting is capturing non-obvious temporal dynamics (e.g.: underlying periodicities) and for this objective, a multitude of deep-learning approaches have been proposed. Transformer-based approaches such as Autoformer \cite{autoformer} and FedFormer \cite{fedformer} propose that better input-sequence decomposition results in enhanced performance. ITransformer \cite{itransformer} inverts the traditional transformer structure, embedding entire channels as tokens and applying attention across channels rather than across time-steps. SOFTS \cite{softs} proposes the efficient use of cross-channel insights by mixing channel-specific and channel-agnostic representations.
+
+The main driver behind the widespread adoption of deep learning approaches is their ability to capture non-obvious trends in data; however, recent studies have shown that deep learning models tend to follow the "easiest" learning path with respect to their loss function \cite{karras}, which, within time-series forecasting, can lead to models generating uninformative and inaccurate results.
+
+Despite the overwhelming progression that time-series forecasting architectures have undergone, the loss functions that these models are trained on have remained the same, with most models being trained with Mean Squared Error and Mean Absolute Error. Recent studies \cite{tilde-q,dilate} have highlighted the limitations of these traditional loss functions, with the criterion in question being unable to accurately capture the varying temporal dynamics (i.e. shape) found in most time series. In particular, Dilate proposes that the explicit capturing of structural similarity and temporal alignment leads to more accurate forecasting, and Tilde-Q expands upon this concept by incorporating invariance to phase and amplitude shifting. Although recent studies have [], creating a loss function that can successfully capture the entirety of temporal dynamics found in time-series remains a challenging task.
+
+
+To address this challenge, we introduce \methodName, a technique that, inspired by Non-Uniform Rational Basis Splines (NURBS), leverages weighted basis splines to form a hierarchical time-series representations, which are then used in calculating a loss that spans several domains (e.g: time domain, frequency domain). In contrast to previous methods, \methodName approaches time-series hierarchically, allowing for [], and compares an intentionally distorted representation of the original series, allowing for the capturing of temporal [] that are not as [] as overarching shape and temporal distortions (e.g, autocorrelation, variance).
+
+Our experimental results demonstrate that \methodName not only allows models to outperform their differently-trained counterparts, but also improves forecasting accuracy when used as a training loss for a fixed architecture. Notably, a 3-layer perceptron trained with \methodName often outperforms MSE- and Tilde-Q-trained MLP baselines on dataset averages in our tables, though it does not beat published MSE-trained architectures on all datasets.
+
+In summary, this paper makes the following contributions:
+\begin{itemize}
+    \item \textbf{Advancing TSF Methodologies}: A complexity-based decomposition framework that iteratively separates temporal dynamics by representational complexity, and a training paradigm that complements architectural advances by supervising hierarchical, regional, and spectral structure rather than point-wise error alone.
+    \item \textbf{Introduction of \methodName}: A novel loss function that uses weighted basis splines and multi-domain error to capture hierarchical, spectral, and temporal dynamics.
+    \item \textbf{Comprehensive Evaluation}: Extensive experiments showcasing the superiority of \methodName over previous loss functions and its robustness across various models, datasets, and forecasting lengths.
+    
+\end{itemize}
+
+
+\section{Preliminaries}
+
+\subsection{Time Series Forecasting}
+
+A given time series can be denoted as \( X = \{X^t_1, \ldots, X^t_C\} \) for \( t = 1, 2, \ldots, L \). In this representation:
+\begin{itemize}
+    \item \( L \) refers to the number of past time steps, known as the look-back window.
+    \item \( X^t_i \) is the value of the \( i \)th feature at the \( t \)th time point.
+    \item \( C \) represents the total number of features or variables in the data.
+\end{itemize}
+
+In time series forecasting, the goal of predicting future values represented as \( \hat{X} = \{\hat{X}^{t}_1, \ldots, \hat{X}^{t}_C\} \) for \( t = L+1, L+2, \ldots, L+T \), where \( T \) indicates the number of future time steps to forecast. As mentioned by Lee et al. \cite{tilde-q}, temporal dynamics can be considered the "informative periodic and nonperiodic patterns in time-series data" (e.g. overall trends, peaks, dips), and as such, any given time series can have $m$ differing patterns contributing to its temporal dynamics.
+
+\subsection{Splines}
+Splines are piecewise polynomial functions that are often used for function approximation and interpolation. In a given spline, there is a non-decreasing vector $n$ knots (i.e. points). The spaces between adjacent distinct knot values, called knot intervals, each house a given polynomial. In most cases, each of these polynomials has the same degree $d$, although more general splines can allow separate degrees for each polynomial.
+
+\subsection{Bézier Splines}
+Bézier splines are piecewise Bézier curve of degree $d$ defined by a distinct set of control points. A Bézier curve of degree $d$ over interval $t\in[0,1]$
+
+\subsubsection{Basis Splines}
+Basis Splines (B-Splines) are a generalization of Bézier splines that allow for more flexible curve fitting than other splines, which has resulted in their wide-ranging use across computer graphics, data modeling, and numerical simulations. B-Splines are defined by a set of control points, which determine the shape of the spline and a knot vector, which partitions the domain into intervals in which polynomials are defined.
+
+\begin{samepage}
+    
+
+B-Splines are defined recursively, through the Cox-de Boor recursion formula, which can be defined as:
+\nopagebreak
+\begin{equation}
+B_{i,0}(x) = \left\{\begin{array}{lr}
+1 & \text{if } t_i \leq x < t_{i+1} \\ 
+0 & \text{otherwise}
+\end{array}\right\}
+\end{equation}
+
+
+\nopagebreak
+\begin{equation}
+\begin{split}
+B_{i,k}(x) &= \frac{x - t_i}{t_{i+k} - t_i} B_{i,k-1}(x) \\
+           &\quad + \frac{t_{i+k+1} - x}{t_{i+k+1} - t_{i+1}} B_{i+1,k-1}(x)
+\end{split}
+\end{equation}
+
+
+where \( t_i \) are the knot values and \( B_{i,k} \) are the B-Spline basis functions of degree \( k \).
+
+\end{samepage}
+
+To fit B-splines to a given time series \( y(t) \), we need to determine the coefficients that best represent the data. Given a set of basis functions \( \mathbf{B}_{i,d}(t) \), the time series \( y(t) \) can be approximated as:
+
+\begin{equation}
+y(t) \approx \sum_{i=0}^{n} c_i \mathbf{B}_{i,d}(t)
+\end{equation}
+
+where \( c_i \) are the coefficients to be determined. These coefficients can be found by minimizing the difference between the original time series and the spline approximation, typically using least squares fitting:
+
+\begin{equation}
+\min_{c_i} \sum_{t} \left( y(t) - \sum_{i=0}^{n} c_i \mathbf{B}_{i,d}(t) \right)^2
+\end{equation}
+
+\subsubsection{NURBS}
+Non-Uniform Rational B-Splines (NURBS), often used in 3D Modeling, are an extension of B-Splines that introduce of weights, allowing for additional flexibility in data fitting.
+
+
+A NURBS curve is defined as:
+
+\begin{equation}
+\mathbf{C}(t) = \frac{\sum_{i=0}^{n} \mathbf{P}_i \mathbf{B}_{i,d}(t) w_i}{\sum_{i=0}^{n} \mathbf{B}_{i,d}(t) w_i}
+\end{equation}
+
+where \( \mathbf{P}_i \) are the control points, \( \mathbf{B}_{i,d}(t) \) are the B-spline basis functions of degree \( d \), and \( w_i \) are the weights associated with each control point.
+
+
+The fitting process for NURBS involves determining both the control points \( \mathbf{P}_i \) and the weights \( w_i \) to best approximate the time series \( y(t) \). This is a more flexible but also more complex process compared to fitting B-splines, as it allows for better handling of irregularities in the data.
+
+Given the NURBS basis functions, the time series \( y(t) \) can be approximated as:
+
+\begin{equation}
+y(t) \approx \sum_{i=0}^{n} \mathbf{P}_i \mathbf{B}_{i,d}(t) w_i
+\end{equation}
+
+where the control points \( \mathbf{P}_i \) and weights \( w_i \) are optimized to minimize the fitting error, often using iterative methods and optimization algorithms to adjust both the positions of the control points and the weights.
+
+
+\section{Related Works}
+
+\subsection{Forecasting Models}
+Time-series forecasting is an area of research that has seen staggaring growith since its inception... Traditional methods (e.g Arima \cite{arima}, Seasonal Arima \cite{seasonalarima}) typically make use of moving averages to for time series forecasting; however, as a result, they struggle to capture non-linear dynamics. As a result, deep learning methods such as Recurrent Neural Networks variants such as the Gated Recurrent Unit (GRU) \cite{gru} and Long-Short Term Memory \cite{lstm} gained popularity as time-series forecasting models due to their ability to model long term dependencies. Recently, more advanced architectures have been proposed to address various challenges in time series forecasting.
+
+Autoformer \cite{autoformer} features an Auto-Correlation mechanism to capture period-based dependencies and separates trend and seasonal components, enhancing long-term forecasting.
+
+Informer \cite{informer} uses a ProbSparse self-attention mechanism to reduce computational load by focusing on key time steps and employs distillation to handle long sequences effectively.
+
+DLinear \cite{dlinear} demonstrates the strength of simple linear models in managing trend and seasonality explicitly, offering a straightforward and interpretable approach.
+
+TiDE \cite{tide} combines multiple techniques to capture temporal dependencies and data embeddings, although specific details are not emphasized in the available sources.
+
+PatchTST \cite{patchtst} implements a patching strategy, treating segments of time series data as tokens in a Transformer model, capturing both local and global dependencies, and accommodating channel independence or mixing.
+
+iTransformer \cite{itransformer} inverts the Transformer architecture, focusing on series representations to improve the capture of multivariate correlations and temporal dependencies.
+
+Time Machine \cite{timemachine} employs Mamba blocks, structured state-space models that handle long-term dependencies by managing channel independence and mixing, making it suitable for complex temporal patterns.
+
+Time LLM \cite{TimeLLM} reprograms large language models for time series forecasting by aligning the input with text prototypes, utilizing LLMs' reasoning capabilities without extensive fine-tuning.
+
+SOFTS \cite{softs} utilizes the STar Aggregate-Redistribute (STAR) module, a centralized system that aggregates series into a global core representation, then redistributes it, reducing complexity and enhancing robustness against distribution shifts.
+
+
+
+\subsection{Loss Functions}
+Despite the advancements in forecasting models, the core loss functions used for evaluating time-series predictions have largely remained the same. Mean Squared Error (MSE) and Mean Absolute Error (MAE) are widely used in time-series forecasting due to their straightforward interpretation, with MSE being the typical choice due to its sensitivity to large errors. Other traditional loss functions, such as Mean Bias Error (MBE), which indicates whether a model consistently overestimates or underestimates the actual values; Mean Absolute Percentage Error (MAPE), which expresses error as percentages to make it invariant to the data scale; and Root Mean Squared Error (RMSE), the square root of MSE, which balances the advantages of both MSE and MAE, are []. More recent methods however, focus on capturing the aspects of time-series' that are difficult to capture with standard point-wise comparisons. 
+
+DILATE \cite{dilate} proposes a loss function consisting of two main components: a shape term that utilizes a smooth approximation of Dynamic Time Warping to measure structural similarity, and a temporal term based on the Temporal Distortion Index (TDI) that penalizes misalignment along the time dimension between predicted and actual values. 
+
+Tilde-Q \cite{tilde-q} extends the idea of accounting for overarching shape and time distortions by introducing a loss that introduces amplitude shifting, phase shifting, and uniform amplication invariances. For amplitude shifting, Tilde-Q uses softmax on signed distances between prediction and ground truth; for phase shifting, Tilde-Q leverages fourier coefficients in comparing dominant and non-dominant frequencies between the prediction and ground truth; to account for uniform amplification, Tilde-Q incorporates normalized cross-correlation.
+
+\section{Methodology}
+
+\subsection{Complexity-based Decomposition}
+In any given time series, there can be $m$ differing factors influencing the temporal dynamics (i.e. shape) of the time series. Given these factors, it is highly improbable that all $m$ factors are of the same complexity $q$, where complexity can be defined as the representational capacity required for a given approximator to create a perfect approximation (e.g. weights in a neural network, coefficients in a spline). 
+
+Based on this understanding, we posit that with a set of $M$ function approximators \(\sum_{i=1}^{N} \hat{f}_i(x)\), a given time series can be decomposed into a complexity-based hierarchy of $M$ approximations through a process we call Complexity-based Decomposition. In this process, a given  time series is iteratively approximated by $M$ approximators of increasing complexity, with each subsequent approximation being calucated using the result of the previous part of the time series un-accounted for in the previous approximations. If $M = m$ and each approximator's representational capacity is equivalent to its temporal dynamics-influencing counterpart, then the process yields approximations that each represent a given factor that influences the temporal dynamics of the original time series. If $M \neq m$ then the process yields approximations that each represent a group of $n_i$ factors, where $i$ is the given hierarchy level and $n_i$ varies with each level.
+
+
+
+Given a time series \( y(t) \), the decomposition into \( m \) components with increasing complexity can be represented as:
+
+\begin{equation}
+y(t) = \sum_{i=1}^{m} \hat{f}_i(t) + R_m(t)
+\end{equation}
+
+where each component \(\hat{f}_i(t)\) is defined recursively based on the residuals \( R_i(t) \):
+
+\begin{equation}
+\hat{f}_i(t) = f_i\left(t, \theta_i\right)
+\end{equation}
+
+\begin{equation}
+R_0(t) = y(t)
+\end{equation}
+
+\begin{equation}
+R_i(t) = R_{i-1}(t) - \hat{f}_i(t) \quad \text{for } \quad i = 1, 2, \ldots, m
+\end{equation}
+
+where \( \hat{f}_i(t) \) is an approximation of the \( i \)-th factor influencing the time series and \( f_i(t, \theta_i) \) is the function approximator parameterized by \( \theta_i \). The conditions for factor separation can be denoted as:
+\begin{equation}
+M = m
+\end{equation}
+
+\begin{equation}
+r(f_i\left(t, \theta_i\right)) = q(A_i(t)) \quad for \quad i = 1, 2, \ldots, m
+\end{equation}
+
+
+where \( q(A_i(t)) \) is the complexity of the \( i \)-th factor influencing the original time series and \( r(f_i\left(t, \theta_i\right)) \) is the representational capacity of the \( i \)-th function approximator.
+
+
+
+
+
+\subsection{Weighted Spline Decomposition}
+In \methodName, we make use of complexity-based decomposition through weighted basis splines; however, unlike the traditional nurbs approximator, we do not optimize weights during the fitting step. Instead we determine the weights foreach polynomial function with a weighting function $W(\cdot)$. We propose that, by weighting the control points of each Basis Spline according to this function instead of through optimization, we can effectively condition the representations of each level on some regional criteria $c$ (e.g, variance, autocorrelation), explicitly influencing the model towards better capturing the given regional criteria.
+
+For a given time series $y(t)$ we formulate the weighted decomposition process as following:
+
+\begin{equation}
+    R_0(t) = y(t)
+\end{equation}
+
+For each level $l=1,\ldots,M$, where $M$ is the predefined maximum number of levels and while $\sigma(R(t)) > \epsilon$, where $\sigma(R(t))$ is the standard deviation of the current residual and $\epsilon$ is a threshold, we: 
+
+\begin{enumerate}
+    \item Define the knot vector \( \mathbf{k}_l \) and compute the weights \( \mathbf{W}_l \) for the current residual \( R_{l-1}(t) \):
+     \[
+     \mathbf{W}_l(t) = W(R_{l-1}(t), c)
+     \]
+     \item Compute the NURBS basis functions \( \mathbf{N}_l(t) \):
+     \[
+     \mathbf{N}_l(t) = \text{get\_nurbs\_basis}(t, \mathbf{k}_l, \mathbf{W}_l, d)
+     \]
+
+     \item Fit the spline coefficients \( \mathbf{C}_l \) and update the residual:
+     \[
+     \mathbf{C}_l = (\mathbf{N}_l^T \mathbf{N}_l)^{-1} \mathbf{N}_l^T R_{l-1}(t)
+     \]
+     \[
+     \mathbf{D}_l(t) = \mathbf{N}_l(t) \mathbf{C}_l
+     \]
+     \[
+     R_l(t) = R_{l-1}(t) - \mathbf{D}_l(t)
+     \]
+
+
+\end{enumerate}
+
+
+\subsection{Level-Weighted Multi-Domain Error}
+
+\subsubsection{Forward Pass Loss}
+Given the weighted spline decomposition function $S(\cdot)$, the predicted and actual values for a time-series forecasting task, $y_{pred}$ and $y_{true}$ respectively, our error function can be calculated as follows:
+
+\begin{equation}
+    s_{pred} = S(y_{pred})
+\end{equation}
+
+\begin{equation}
+    s_{true} = S(y_{true})
+\end{equation}
+
+\begin{align}
+Error &= \alpha(s_{pred}^* - s_{true}^*) 
+       + \beta(s_{pred}^{'} - s_{true}^{'}) \nonumber \\
+      &\quad + \gamma\big( FFT(s_{pred}^{*}) - FFT(s_{true}^{*}) \big)
+\end{align}
+
+
+where $*$ indicates normalization, $'$ indicates derivation with respect to time, and $FFT(\cdot)$ represents the Fast Fourier Transform (FFT) of a given tensor.
+
+\subsubsection{Gradient Manipulation}
+During the decomposition process of $y_pred$, we calculate the importance of each level through the following:
+
+\begin{equation}
+Importance = (y_{pred} - y_{true})^x
+\end{equation}
+where $x$ is a hyperparameter determining the power to which the error should be raised. The mean of each level in this importance tensor is stored such that, during the backward pass, the gradients of each level are scaled by their respective importances.
+
+\section{Experiments}
+
+\subsection{Experimental Setup}
+
+\subsubsection{Datasets}
+We conduct experiments on 9 mainstream time-series forecasting datasets, including ETTh1, ETTh2, ETTm1, ETTm2, Electricity, Traffic, Exchange-Rate, Weather, and Solar-Energy. Detailed Dataset Descriptions can be found in Appendix A.
+
+
+\subsubsection{Evaluation Metrics}
+To evaluate the efficacy of \methodName, we follow previous works \cite{autoformer}, in using Mean Squared Error (MSE) and Mean Absolute Error (MAE) as our main evaluation metrics. 
+
+\subsubsection{Compared Methods}
+We conduct experiments with 8 state-of-the-art (SOTA) models: Autoformer \cite{autoformer}, one GRU, and one 3-layer MLP.
+
+\subsection{Implementation Details}
+We use the Adam optimizer \cite{kingma2014adam} with an initial learning rate of $10^{-3}$. For \methodName, $(\alpha, \beta, \gamma)$ and related settings are tuned per dataset and prediction length (Appendix hyperparameter table); global defaults are not used for reported \methodName runs. We search the hidden dimensionality of the 3-Layer MLP within the set $\{128, 256, 512, 1024\}$.
+
+
+\section{Main Results}
+
+
+\begin{table*}[!htbp]
+    \centering
+    \caption{Full results of the long-term forecasting task. We compare extensive competitive models under different prediction lengths following the setting of TimesNet (2023). The input sequence length is set to 96 for all baselines. Avg means the average results from all four prediction lengths.}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{c|c|cc|cc|cc|cc|cc|cc|cc|cc|cc|c|}
+    \toprule
+    \multirow{2}{*} {\textbf{Models}} & 
+    \multirow{2}{*} {\textbf{Loss}} & 
+    \multicolumn{2}{c|}{\textbf{ETTm1}} & 
+    \multicolumn{2}{c|}{\textbf{ETTm2}} & 
+    \multicolumn{2}{c|}{\textbf{ETTh1}} & 
+    \multicolumn{2}{c|}{\textbf{ETTh2}} & 
+    \multicolumn{2}{c|}{\textbf{ECL}} & 
+    \multicolumn{2}{c|}{\textbf{Exchange}} & 
+    \multicolumn{2}{c|}{\textbf{Traffic}} & 
+    \multicolumn{2}{c|}{\textbf{Weather}} & 
+    \multicolumn{2}{c|}{\textbf{Solar-Energy}} &
+    \multicolumn{1}{c|}{\textbf{Wins}} \\ 
+    
+     &  &
+     
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} &
+     \\
+
+     \midrule
+     
+    \multirow{3}{*}
+    {\textbf{MLP}} 
+    & MSE & 0.406 & 0.424 & - & - & 0.480 & 0.466 & 0.548 & 0.485 & - & - & - & - & - & - & - & - & - & - & 0 
+    \\ 
+    & Tilde-Q & 0.402 & 0.409 & 0.314 & 0.346 & 0.462 & 0.451 & 0.499 & 0.456 & 0.198 & 0.284 & 0.398 & 0.455 & 0.542 & 0.327 & 0.238 & 0.276 & - & - & 0 
+    \\
+    & \methodName & \textcolor{red}{\textbf{0.383}} & \textcolor{red}{\textbf{0.395}} & \textcolor{red}{\textbf{0.299}} & \textcolor{red}{\textbf{0.340}} & \textcolor{red}{\textbf{0.437}} & \textcolor{red}{\textbf{0.437}} & \textcolor{red}{\textbf{0.456}} & \textcolor{red}{\textbf{0.440}} & \textcolor{red}{\textbf{0.196}} & \textcolor{red}{\textbf{0.281}} & - & - & \textcolor{red}{\textbf{0.520}} & \textcolor{red}{\textbf{0.316}} & - & - & - & - & 8
+        \\ \midrule
+        
+    \multirow{3}{*}
+    {\textbf{SOFTS}}
+    & MSE & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+
+    \multirow{3}{*}
+    {\textbf{Time-LLM}}
+    & MSE & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+         \\ \midrule
+
+    \multirow{3}{*}
+    {\textbf{Time-Machine}}
+    & MSE & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+         \\ \midrule
+         
+    \multirow{3}{*}
+    {\textbf{iTransformer}}
+    & MSE & 0.407 & 0.410 & 0.288 & 0.332 & 0.454 & 0.447 & 0.383 & 0.407 & 0.178 & 0.270 & 0.360 & 0.403 & 0.428 & 0.282 & 0.258 & 0.278 & 0.233 & 0.262 & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+
+    \multirow{3}{*}
+    {\textbf{RLinear}}
+    & MSE & 0.414 & 0.407 & 0.286 & 0.327 & 0.446 & 0.434 & 0.374 & 0.398 & 0.219 & 0.298 & 0.378 & 0.417 & 0.626 & 0.378 & 0.272 & 0.291 & 0.369 & 0.356 & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+        
+    \multirow{3}{*}
+    {\textbf{PatchTST}}
+    & MSE & 0.387 & 0.400 & 0.281 & 0.326 & 0.469 & 0.454 & 0.387 & 0.407 & 0.205 & 0.290 & 0.367 & 0.404 & 0.481 & 0.304 & 0.259 & 0.281 & 0.270 & 0.307 & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+        
+    \multirow{3}{*}
+    {\textbf{TiDE}} 
+    & MSE &  0.419 & 0.419 & 0.358 & 0.404 & 0.541 & 0.507 & 0.611 & 0.550 & 0.251 & 0.344 & 0.370 & 0.413 & 0.760 & 0.473 & 0.271 & 0.320 & 0.347 & 0.417 & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+        
+    \multirow{3}{*}
+    {\textbf{DLinear}}
+    & MSE & 0.403 & 0.407 & 0.350 & 0.401 & 0.456 & 0.452 & 0.559 & 0.515 & 0.212 & 0.300 & 0.354 & 0.414 & 0.625 & 0.383 & 0.265 & 0.317 & 0.330 & 0.401 & -
+    \\ 
+    & Tilde-Q & 0.398 & 0.397 & 0.289 & 0.338 & 0.446 & 0.438 & 0.437 & 0.442 & 0.212 & 0.295 & 0.304 & 0.383 & 0.643 & 0.398 & 0.264 & 0.301 & - & - &  0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+
+    \multirow{3}{*}
+    {\textbf{Autoformer}}
+    & MSE & 0.588 & 0.517 & 0.327 & 0.371 & 0.496 & 0.487 & 0.450 & 0.459 & 0.227 & 0.338 & 0.613 & 0.539 & 0.628 & 0.379 & 0.338 & 0.382 & 0.885 & 0.711 & -
+    \\ 
+    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
+    \\
+    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
+        \\ \midrule
+        
+    \end{tabular}
+    }
+\end{table*}
+
+\subsection{Overall Effectiveness of HNMD}
+Across nine datasets and four prediction horizons per dataset, we compare \methodName (HNMD) training against MSE and Tilde-Q training where runs are available. Gains are largest for MLPs (Table~1). The Wins column counts dataset-average test MSE/MAE pairs among \{MSE, Tilde-Q, \methodName\} for that model row only.
+
+\subsubsection{MLP Case Study}
+The MLP results highlight the clearest trends. On \textit{ETTm1}, HNMD reduces the average MSE to $0.383$, outperforming Tilde-Q ($0.402$) and the vanilla MSE baseline ($0.406$). A similar pattern is seen on \textit{ETTm2}, where HNMD achieves $0.299$ MSE, compared with $0.314$ for Tilde-Q. Improvements on ETTh1 and ETTh2 are on the order of $5$--$10$ percent over MSE/Tilde-Q MLP averages where reported.
+
+\subsubsection{Dataset-Specific Trends (See B.1)}
+\textbf{ETT Benchmarks (ETTm1, ETTm2, ETTh1, ETTh2).} HNMD consistently outperforms other \emph{training losses} on reported MLP averages. The advantage is strongest on ETTh2, which contains higher-variance seasonal fluctuations; here, hierarchical decomposition and frequency-domain supervision appear particularly beneficial.
+
+\textbf{Electricity (ECL).} Where reported, HNMD achieves competitive MAE ($0.281$) relative to Tilde-Q on the MLP average.
+
+\textbf{Traffic.} HNMD reduces MAE to $0.316$ versus $0.327$ with Tilde-Q on the MLP average in our table.
+
+\section{Conclusion and Future Work}
+
+\subsection{Conclusion}
+
+In this paper, we introduce Hierarchical NURBS-Inspired Multi-Domain Loss (\methodName), a novel loss function that leverages hierarchical time-series representations created through region-conditioned basis splines in multiple domains. We evaluate \methodName primarily on a 3-layer MLP across nine datasets and four horizons, with MSE-trained architecture baselines for context. Results show improvements where \methodName training was run (mainly MLP rows in Table~1); most other architectures are not yet trained with \methodName in this study.
+
+\subsection{Future Work}
+For future work, several promising directions emerge:
+
+\subsubsection{Adaptive Hierarchal Decomposition}
+While our current approach uses a fixed number of hierarchical levels ($M=5$), future work could explore adaptive mechanisms for automatically determining the optimal number of decomposition levels based on the complexity and characteristics of individual time series. This could involve information-theoretic criteria or reinforcement learning approaches to dynamically adjust the hierarchy depth during training.
+
+\subsubsection{Alternative Weighting Functions}
+Our current weighting function $W(\cdot)$ conditions representations on regional criteria such as variance and autocorrelation. Future research could investigate other conditioning criteria, such as entropy, spectral density, or learned feature representations. Additionally, exploring learnable weighting functions that adapt to specific datasets could prove to further improve performance.
+
+\FloatBarrier
+\clearpage
+\bibliography{iclr2025_conference}
+\bibliographystyle{plain}
+
+\appendix
+\section{Appendix}
+\section{A. Experimental Details}
+
+\subsection{Dataset Descriptions}
+
+\begin{enumerate}
+    
+    \item \textbf{ETT (Electricity Transformer Temperature)} \cite{}\footnote{https://github.com/zhouhaoyi/ETDataset} comprises two hourly-level datasets (ETTh) and two 15-minute-level datasets (ETTm). Each dataset contains seven oil and load features of electricity transformers from July 2016 to July 2018.
+    
+    \item \textbf{Traffic}\footnote{} describes the road occupancy rates. It contains the hourly data recorded by the sensors of San Francisco freeways from 2015 to 2016.
+    
+    \item \textbf{Electricity}\footnote{} collects the hourly electricity consumption of 321 clients from 2012 to 2014.
+    
+    \item \textbf{Weather} includes 21 indicators of weather, such as air temperature, and humidity. Its data is recorded every 10 min for 2020 in Germany.
+    
+    \item \textbf{Solar-Energy} \cite{} records the solar power production of 137 PV plants in 2006, which is sampled every 10 minutes.
+    
+\end{enumerate}
+
+
+\subsection{Implementation Details}
+
+\subsection{Full Results}
+
+\begin{table*}[!htbp]
+    \centering
+    \caption{Full results of the long-term forecasting task. We compare extensive competitive models under different prediction lengths following the setting of TimesNet (2023). The input sequence length is set to 96 for all baselines. Avg means the average results from all four prediction lengths.}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{c|c|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc}
+    \toprule
+    \multirow{2}{*} {\textbf{Models}} & \multirow{2}{*} {\textbf{Metric}} & 
+    
+    \multicolumn{6}{c|}{\textbf{MLP}} & 
+    \multicolumn{6}{c|}{\textbf{SOFTS}} & 
+    \multicolumn{6}{c|}{\textbf{Time-LLM}} & 
+    \multicolumn{6}{c|}{\textbf{Time-Machine}} & 
+    
+     &  & 
+
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} 
+     
+     &  &  & 
+     
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} \\ 
+
+     \midrule
+
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTm1}}}
+      & 96 & - & - & 0.321 & 0.356 & 0.339 & 0.369 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.364 & 0.384 & 0.385 & 0.395 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.394 & 0.404 & 0.414 & 0.420 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.452 & 0.437 & 0.471 & 0.454 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.383 & 0.395 & 0.402 & 0.409 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+     
+     
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTm2}}}
+      & 96 & - & - & 0.179 & 0.262 & 0.183 & 0.262 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.246 & 0.306 & 0.257 & 0.311 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.319 & 0.353 & 0.335 & 0.362 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.451 & 0.441 & 0.479 & 0.451 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.299 & 0.340 & 0.314 & 0.346 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+     
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTh1}}}
+      & 96 & - & - & 0.363 & 0.387 & 0.382 & 0.400 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.409 & 0.414 & 0.427 & 0.427 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.460 & 0.446 & 0.481 & 0.461 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.516 & 0.501 & 0.560 & 0.517 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.437 & 0.437 & 0.462 & 0.451 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTh2}}} 
+      & 96 & - & - & 0.294 & 0.343 & 0.301 & 0.344 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.373 & 0.392 & 0.380 & 0.395 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.420 & 0.423 & 0.417 & 0.428 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.736 & 0.602 & 0.898 & 0.657 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.456 & 0.440 & 0.499 & 0.456 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ECL}}} 
+      & 96 & - & - & 0.174 & 0.257 & 0.181 & 0.267 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.182 & 0.268 & 0.183 & 0.270 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.197 & 0.284 & 0.196 & 0.282 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.231 & 0.315 & 0.232 & 0.315 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.196 & 0.281 & 0.198 & 0.284 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+     
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Exchange}}} 
+      & 96 & - & - & 0.095 & 0.227 & 0.115 & 0.251 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.192 & 0.322 & 0.221 & 0.347 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.387 & 0.462 & 0.471 & 0.527 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.738 & 0.658 & 0.783 & 0.695 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.353 & 0.417 & 0.398 & 0.455 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+        
+    
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Traffic}}} 
+      & 96 & - & - & 0.501 & 0.308 & 0.527 & 0.324 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.502 & 0.307 & 0.525 & 0.320 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.520 & 0.314 & 0.534 & 0.320 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.557 & 0.333 & 0.582 & 0.344 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & 0.520 & 0.316 & 0.542 & 0.327 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Weather}}} 
+      & 96 & - & - & 0.165 & 0.212 & 0.166 & 0.212 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & 0.207 & 0.252 & 0.206 & 0.251 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & 0.255 & 0.293 & 0.256 & 0.293 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & 0.330 & 0.352 & 0.324 & 0.346 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & - & - & 0.238 & 0.276 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Solar-Energy}}} 
+      & 96 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 192 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 336 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
+     & 720 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
+     & Avg & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+
+    \multirow{1}{*}
+    {\textbf{Win Count}}
+    &  & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\
+    \midrule
+    
+    \multirow{1}{*}
+    {\textbf{1st Count}}
+    &  & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\
+
+    \bottomrule
+        
+    \end{tabular}
+    }
+\end{table*}
+
+\begin{table*}[!htbp]
+    \centering
+    \caption{Full results of the long-term forecasting task. We compare extensive competitive models under different prediction lengths following the setting of TimesNet (2023). The input sequence length is set to 96 for all baselines. Avg means the average results from all four prediction lengths.}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{c|c|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|}
+    \toprule
+    \multirow{2}{*} {\textbf{Models}} & \multirow{2}{*} {\textbf{Metric}} & 
+    
+    \multicolumn{4}{c|}{\textbf{RLinear}} & 
+    \multicolumn{4}{c|}{\textbf{PatchTST}} & 
+    \multicolumn{4}{c|}{\textbf{TiDE}} & 
+    \multicolumn{4}{c|}{\textbf{DLinear}} & 
+    \multicolumn{4}{c|}{\textbf{Autoformer}} & 
+    
+     &  & 
+
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
+    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
+     
+     &  &
+     
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} & 
+     \textbf{MSE} & \textbf{MAE} \\ 
+
+     \midrule
+
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTm1}}}
+    & 96 &  0.355 & 0.376 & - & - &  0.329 & 0.367 & - & - & - & - & - & - & - & - & - & - & 0.334 & 0.368 & - & \\ 
+     & 192 & 0.391 & 0.392 & - & - & 0.367 & 0.385 & - & - & - & - & - & - & - & - & - & - & 0.377 & 0.391 & - & \\ 
+     & 336 & 0.424 & 0.415 & - & - & 0.399 & 0.410 & - & - & - & - & - & - & - & - & - & - & 0.426 & 0.420 & - &  \\ 
+     & 720 & 0.487 & 0.450 & - & - & 0.454 & 0.439 & - & - & - & - & - & - & - & - & - & - & 0.491 & 0.459 & - & \\ \cmidrule{2-22}
+     & Avg & 0.414 & 0.407 & - & - & 0.387 & 0.400 & - & - & - & - & - & - & - & - & - & - & 0.407 & 0.410 & - & \\ \midrule
+     
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTm2}}}
+    & 96 & 0.182 & 0.265 & - & - &  0.175 & 0.259 & - & - & - & - & - & - & - & - & - & - & 0.180 & 0.264 & - & \\ 
+     & 192 & 0.246 & 0.304 & - & - & 0.241 & 0.302 & - & - & - & - & - & - & - & - & - & - & 0.250 & 0.309 & - & \\ 
+     & 336 & 0.307 & 0.342 & - & - & 0.305 & 0.343 & - & - & - & - & - & - & - & - & - & - & 0.311 & 0.348 & - &  \\ 
+     & 720 & 0.407 & 0.398 & - & - & 0.402 & 0.400 & - & - & - & - & - & - & - & - & - & - & 0.412 & 0.407 & - & \\ \cmidrule{2-22}
+     & Avg & 0.286 & 0.327 & - & - & 0.281 & 0.326 & - & - & - & - & - & - & - & - & - & - & 0.288 & 0.332 & - & \\ \midrule
+     
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTh1}}}
+    & 96 & 0.386 & 0.395 & - & - & 0.414 & 0.419 & - & - & - & - & - & - & - & - & - & - & 0.386 & 0.405 & - & \\ 
+     & 192 & 0.437 & 0.424 & - & - & 0.460 & 0.445 & - & - & - & - & - & - & - & - & - & - & 0.441 & 0.436 & - & \\ 
+     & 336 & 0.479 & 0.446 & - & - & 0.501 & 0.466 & - & - & - & - & - & - & - & - & - & - & 0.487 & 0.458 & - & \\ 
+     & 720 & 0.481 & 0.470 & - & - &  0.500 & 0.488 & - & - & - & - & - & - & - & - & - & - & 0.503 & 0.491 & - & \\ \cmidrule{2-22}
+     & Avg & 0.446 & 0.434 & - & - & 0.469 & 0.454 & - & - & - & - & - & - & - & - & - & - & 0.454 & 0.447 & - & \\ \midrule
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ETTh2}}} 
+    & 96 & 0.288 & 0.338 & - & - & 0.302 & 0.348 & - & - & - & - & - & - & - & - & - & - & 0.297 & 0.349& - &  \\ 
+     & 192 & 0.374 & 0.390 & - & - & 0.388 & 0.400 & - & - & - & - & - & - & - & - & - & - & 0.380 & 0.400 & - & \\ 
+     & 336 & 0.415 & 0.426 & - & - & 0.426 & 0.433 & - & - & - & - & - & - & - & - & - & - & 0.428 & 0.432 & - & \\ 
+     & 720 & 0.420 & 0.440 & - & - & 0.431 & 0.446  & - & - & - & - & - & - & - & - & - & - & 0.427 & 0.445 & - &  \\ \cmidrule{2-22}
+     & Avg & 0.374 & 0.398 & - & - & 0.387 & 0.407 & - & - & - & - & - & - & - & - & - & - & 0.383 & 0.407 & - &  \\ \midrule
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{ECL}}} 
+    & 96 & 0.201 & 0.281 & - & - & 0.181 & 0.270  & - & - & - & - & - & - & - & - & - & - & 0.148 & 0.240 & - &  \\ 
+     & 192 & 0.201 & 0.283 & - & - & 0.188 & 0.274  & - & - & - & - & - & - & - & - & - & - & 0.162 & 0.253 & - &  \\ 
+     & 336 & 0.215 & 0.298 & - & - & 0.204 & 0.293 & - & - & - & - & - & - & - & - & - & - & 0.178 & 0.269 & - &  \\ 
+     & 720 & 0.257 & 0.331 & - & - &  0.246 & 0.324 & - & - & - & - & - & - & - & - & - & - & 0.225 & 0.317 & - &  \\ \cmidrule{2-22}
+     & Avg & 0.219 & 0.298 & - & - & 0.205 & 0.290 & - & - & - & - & - & - & - & - & - & - & 0.178 & 0.270  & - & \\ \midrule
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Exchange}}} 
+    & 96 & 0.093 & 0.217 & - & - & 0.088 & 0.205 & - & - & - & - & - & - & - & - & - & - & 0.086 & 0.206 & - & \\ 
+     & 192 & 0.184 & 0.307 & - & - & 0.176 & 0.299 & - & - & - & - & - & - & - & - & - & - & 0.177 & 0.299 & - &  \\ 
+     & 336 & 0.351 & 0.432 & - & - & 0.301 & 0.397 & - & - & - & - & - & - & - & - & - & - & 0.331 & 0.417 & - &  \\ 
+     & 720 & 0.886 & 0.714 & - & - & 0.901 & 0.714 & - & - & - & - & - & - & - & - & - & - & 0.847 & 0.691 & - &  \\ \cmidrule{2-22}
+     & Avg & 0.378 & 0.417 & - & - & 0.367 & 0.404 & - & - & - & - & - & - & - & - & - & - & 0.360 & 0.403 & - & \\ \midrule
+     
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Traffic}}} 
+    & 96 & 0.649 &  0.389 & - & - & 0.462 & 0.295 & - & - & - & - & - & - & - & - & - & - & 0.395 & 0.268 & - & \\ 
+     & 192 & 0.601 & 0.366 & - & - & 0.466 & 0.296 & - & - & - & - & - & - & - & - & - & - & 0.417 & 0.276 & - & \\ 
+     & 336 & 0.609 & 0.369 & - & - & 0.482 & 0.304 & - & - & - & - & - & - & - & - & - & - & 0.433 & 0.283 & - &  \\ 
+     & 720 & 0.647 & 0.387 & - & - & 0.514 & 0.322 & - & - & - & - & - & - & - & - & - & - & 0.467 & 0.302  & - &  \\ \cmidrule{2-22}
+     & Avg & 0.626 & 0.378 & - & - & 0.481 & 0.304 & - & - & - & - & - & - & - & - & - & - & 0.428 & 0.282 & - &  \\ \midrule
+        
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Weather}}} 
+    & 96 & 0.192 & 0.232 & - & - & 0.177 & 0.218 & - & - & - & - & - & - & - & - & - & - & 0.174 & 0.214 & - & \\
+     & 192 & 0.240 & 0.271 & - & - & 0.225 & 0.259 & - & - & - & - & - & - & - & - & - & - & 0.221 & 0.254 & - &  \\ 
+     & 336 & 0.292 & 0.307 & - & - & 0.278 & 0.297 & - & - & - & - & - & - & - & - & - & - & 0.278 & 0.358 & - &  \\ 
+     & 720 & 0.364 & 0.353 & - & - &  0.354 & 0.348 & - & - & - & - & - & - & - & - & - & - & 0.358 & 0.347 & - & \\ \cmidrule{2-22}
+     & Avg & 0.272 & 0.291 & - & - & 0.259 & 0.281 & - & - & - & - & - & - & - & - & - & - & 0.258 & 0.278 & - &  \\ \midrule
+
+    \multirow{5}{*}
+    {\rotatebox{90}{\textbf{Solar-Energy}}} 
+    & 96 & 0.322 & 0.339 & - & - & 0.234 & 0.286 & - & - & - & - & - & - & - & - & - & - & 0.203 & 0.237 & - & \\
+     & 192 & 0.359 & 0.356 & - & - & 0.267 & 0.310 & - & - & - & - & - & - & - & - & - & - & 0.233 & 0.261 & - &  \\ 
+     & 336 & 0.397 & 0.369 & - & - & 0.290 & 0.315 & - & - & - & - & - & - & - & - & - & - & 0.248 & 0.273 & - &  \\ 
+     & 720 & 0.397 & 0.356 & - & - & 0.289 & 0.317 & - & - & - & - & - & - & - & - & - & - & 0.249 & 0.275 & - & \\ \cmidrule{2-22}
+     & Avg & 0.369 & 0.356 & - & - & 0.270 & 0.307 & - & - & - & - & - & - & - & - & - & - & 0.233 & 0.262 & - &  \\ \midrule
+
+    \multirow{1}{*}
+    {\textbf{Win Count}}
+    & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & \\
+    \midrule
+    
+    \multirow{1}{*}
+    {\textbf{1st Count}}
+    & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & \\
+
+    \bottomrule
+        
+    \end{tabular}
+    }
+\end{table*}
+
+
+
+\begin{table*}[!htbp]
+    \centering
+    \caption{MSSD Hyperparameter settings per dataset}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{c|c|c|c|c|c|c|c|c|c}
+    \toprule
+    
+    {\textbf{Dataset}} & 
+    {\textbf{Pred Length}} & 
+    
+    {\textbf{Max Levels}} & 
+    {\textbf{Spline Degree}} & 
+    {\textbf{Alpha}} & 
+    {\textbf{Beta}} & 
+    {\textbf{Gamma}} & 
+    {\textbf{Knot Scaling Factor}} & 
+    {\textbf{Spline Criterion Exponent}} & 
+    {\textbf{Control Point Weight Window}} & 
+    
+
+     \midrule
+
+    \multirow{4}{*}
+    {\textbf{ETTm1}}
+     & 96 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
+    & 336 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
+    \midrule
+
+    \multirow{4}{*}
+    {\textbf{ETTm2}}
+     & 96 & 5 & 3 & 0.10 & 1 & 1 & 3 & 2 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
+    & 336 & 5 & 3 & 0.10 & 1 & 5 & 5 & 1 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 1 & 5 & 5 & 1 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{ETTh1}}
+     & 96 & 5 & 3 & 0.01 & 2 & 1 & 3 & 1 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 2 & 2 & 3 & 1 & 4 \\ 
+    & 336 & 5 & 3 & 0.01 & 2 & 3 & 5 & 1 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 2 & 3 & 5 & 1 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{ETTh2}} 
+     & 96 & 5 & 3 & 1.00 & 0 & 1 & 5 & 5 & 4 \\ 
+    & 192 & 5 & 3 & 0.10 & 1 & 1 & 5 & 5 & 4 \\ 
+    & 336 & 5 & 3 & 0.10 & 0 & 0 & 5 & 3 & 4 \\ 
+    & 720 & 5 & 3 & 0.10 & 2 & 3 & 5 & 2 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{ECL}}
+     & 96 & 5 & 3 & 0.01 & 0 & 5 & 3 & 2 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 2 & 2 & 1 & 1 & 4 \\ 
+    & 336 & 5 & 3 & 0.01 & 2 & 2 & 5 & 3 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 0 & 5 & 5 & 1 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{Exchange}} 
+     & 96 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
+    & 336 & 5 & 3 & 0.10 & 0 & 2 & 3 & 1 & 4 \\ 
+    & 720 & 5 & 3 & 0.10 & 0 & 3 & 4 & 4 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{Traffic}} 
+     & 96 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
+    & 336 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 0 & 5 & 3 & 1 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{Weather}} 
+     & 96 & 5 & 3 & 0.01 & 1 & 1 & 3 & 1 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 0 & 5 & 5 & 2 & 4 \\ 
+    & 336 & 5 & 3 & 0.01 & 0 & 3 & 5 & 3 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 0 & 5 & 5 & 5 & 4 \\ 
+    \midrule
+    
+    \multirow{4}{*}
+    {\textbf{Solar-Energy}}
+     & 96 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
+    & 192 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
+    & 336 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
+    & 720 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
+
+    \bottomrule
+    
+    \end{tabular}
+    }
+\end{table*}
+
+
+
+
+\end{document}

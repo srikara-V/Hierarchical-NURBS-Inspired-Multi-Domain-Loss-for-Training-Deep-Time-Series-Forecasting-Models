@@ -21,7 +21,8 @@ Training picks an accelerator automatically when `--use_gpu` is enabled (default
 3. **CPU** (fallback)
 
 Mixed precision (`--use_amp`) is enabled only on CUDA. On Mac, training uses MPS without AMP. Pass `--use_gpu False` to force CPU.
- into `./data/` (see [scripts/multivariate_forecasting/README.md](scripts/multivariate_forecasting/README.md)). Expected layout:
+
+Place datasets into `./data/` (see [scripts/multivariate_forecasting/README.md](scripts/multivariate_forecasting/README.md)). Expected layout:
 
 ```
 data/
@@ -65,8 +66,21 @@ python run_experiments.py --models MLP DLinear iTransformer --datasets all --los
 | `experimentation_mssdtraffic.py` | Tuned MLP + HNMD on Traffic only |
 | `to_excel.py` | Aggregate `./results/*/metrics.npy` into `output.xlsx` |
 | `filltables.py` | Build paper Tables 2, 3, and 4 into `tables/filled_tables.xlsx` |
+| `paper/generate_tables.py` | Emit LaTeX `stats.tex` and `tables_generated.tex` from `./results/` |
 
 Shell shortcuts live in `scripts/hnmd/`.
+
+## Paper (LaTeX)
+
+Source: [paper/main.tex](paper/main.tex). Build after experiments:
+
+```bash
+python filltables.py --no-run_missing
+python paper/generate_tables.py
+cd paper && pdflatex main.tex && bibtex main && pdflatex main.tex
+```
+
+Abstract win-counts are **auto-generated** from `./results/` (not hand-edited). PatchTST/TiDE/Time-LLM numbers in the paper are cited reported baselines, not runs from this repo unless you add them to `filltables.py` coverage.
 
 ## Supported models
 
@@ -145,3 +159,9 @@ python filltables.py --no-run_missing
 ```
 
 This produces Excel sheets for **Table 2**, **Table 3**, **Table 4**, plus coverage and raw result summaries. Missing cells for models not in the repo (Time-LLM, PatchTST, TiDE, etc.) stay as `-` and are listed on the **SkippedJobs** sheet. Table 4 is always populated from the bundled MSSD hyperparameter configs. Use `--aggregate best` to pick the lowest-MSE run when multiple seeds exist.
+
+Then regenerate the PDF tables:
+
+```bash
+python paper/generate_tables.py
+```

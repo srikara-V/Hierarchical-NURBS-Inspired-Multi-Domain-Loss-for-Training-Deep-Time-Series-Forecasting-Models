@@ -111,8 +111,9 @@ def collect_results(results_dir: str = "./results") -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     # Drop duplicate settings (e.g. nested results/results/ from Modal download).
+    # Include data_path so custom datasets (traffic, electricity, weather, …) are not merged.
     df = df.sort_values("mse").drop_duplicates(
-        subset=["model", "data", "pred_len", "loss"], keep="first"
+        subset=["model", "data", "data_path", "pred_len", "loss"], keep="first"
     )
     for col in ["pred_len", "ii"]:
         if col in df.columns:
