@@ -319,128 +319,47 @@ We use the Adam optimizer \cite{kingma2014adam} with an initial learning rate of
 
 \begin{table*}[!htbp]
     \centering
-    \caption{Full results of the long-term forecasting task. We compare extensive competitive models under different prediction lengths following the setting of TimesNet (2023). The input sequence length is set to 96 for all baselines. Avg means the average results from all four prediction lengths.}
+    \caption{Long-horizon forecasting with a fixed 3-layer MLP and varying training loss. Input length is $96$; prediction lengths are $\{96,192,336,720\}$. Each entry is the mean test metric over all four horizons. \textbf{Bold red} marks the best MSE/MAE pair among \{MSE, Tilde-Q, \methodName\} for that dataset. A dash denotes a dataset--loss setting that is not yet complete across all four horizons. The Wins column counts completed dataset-average MSE/MAE pairs won by each loss.}
     \resizebox{\textwidth}{!}{
-    \begin{tabular}{c|c|cc|cc|cc|cc|cc|cc|cc|cc|cc|c|}
+    \begin{tabular}{l|cc|cc|cc|cc|cc|c}
     \toprule
-    \multirow{2}{*} {\textbf{Models}} & 
-    \multirow{2}{*} {\textbf{Loss}} & 
-    \multicolumn{2}{c|}{\textbf{ETTm1}} & 
-    \multicolumn{2}{c|}{\textbf{ETTm2}} & 
-    \multicolumn{2}{c|}{\textbf{ETTh1}} & 
-    \multicolumn{2}{c|}{\textbf{ETTh2}} & 
-    \multicolumn{2}{c|}{\textbf{ECL}} & 
-    \multicolumn{2}{c|}{\textbf{Exchange}} & 
-    \multicolumn{2}{c|}{\textbf{Traffic}} & 
-    \multicolumn{2}{c|}{\textbf{Weather}} & 
-    \multicolumn{2}{c|}{\textbf{Solar-Energy}} &
-    \multicolumn{1}{c|}{\textbf{Wins}} \\ 
-    
-     &  &
-     
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
+    \multirow{2}{*}{\textbf{Training Loss}} &
+    \multicolumn{2}{c|}{\textbf{ETTh1}} &
+    \multicolumn{2}{c|}{\textbf{ETTh2}} &
+    \multicolumn{2}{c|}{\textbf{ECL}} &
+    \multicolumn{2}{c|}{\textbf{Traffic}} &
+    \multicolumn{2}{c|}{\textbf{Weather}} &
+    \multirow{2}{*}{\textbf{Wins}} \\
+     &
+     \textbf{MSE} & \textbf{MAE} &
+     \textbf{MSE} & \textbf{MAE} &
+     \textbf{MSE} & \textbf{MAE} &
+     \textbf{MSE} & \textbf{MAE} &
      \textbf{MSE} & \textbf{MAE} &
      \\
-
      \midrule
-     
-    \multirow{3}{*}
-    {\textbf{MLP}} 
-    & MSE & 0.406 & 0.424 & - & - & 0.480 & 0.466 & 0.548 & 0.485 & - & - & - & - & - & - & - & - & - & - & 0 
-    \\ 
-    & Tilde-Q & 0.402 & 0.409 & 0.314 & 0.346 & 0.462 & 0.451 & 0.499 & 0.456 & 0.198 & 0.284 & 0.398 & 0.455 & 0.542 & 0.327 & 0.238 & 0.276 & - & - & 0 
-    \\
-    & \methodName & \textcolor{red}{\textbf{0.383}} & \textcolor{red}{\textbf{0.395}} & \textcolor{red}{\textbf{0.299}} & \textcolor{red}{\textbf{0.340}} & \textcolor{red}{\textbf{0.437}} & \textcolor{red}{\textbf{0.437}} & \textcolor{red}{\textbf{0.456}} & \textcolor{red}{\textbf{0.440}} & \textcolor{red}{\textbf{0.196}} & \textcolor{red}{\textbf{0.281}} & - & - & \textcolor{red}{\textbf{0.520}} & \textcolor{red}{\textbf{0.316}} & - & - & - & - & 8
-        \\ \midrule
-        
-    \multirow{3}{*}
-    {\textbf{SOFTS}}
-    & MSE & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-
-    \multirow{3}{*}
-    {\textbf{Time-LLM}}
-    & MSE & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-         \\ \midrule
-
-    \multirow{3}{*}
-    {\textbf{Time-Machine}}
-    & MSE & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-         \\ \midrule
-         
-    \multirow{3}{*}
-    {\textbf{iTransformer}}
-    & MSE & 0.407 & 0.410 & 0.288 & 0.332 & 0.454 & 0.447 & 0.383 & 0.407 & 0.178 & 0.270 & 0.360 & 0.403 & 0.428 & 0.282 & 0.258 & 0.278 & 0.233 & 0.262 & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-
-    \multirow{3}{*}
-    {\textbf{RLinear}}
-    & MSE & 0.414 & 0.407 & 0.286 & 0.327 & 0.446 & 0.434 & 0.374 & 0.398 & 0.219 & 0.298 & 0.378 & 0.417 & 0.626 & 0.378 & 0.272 & 0.291 & 0.369 & 0.356 & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-        
-    \multirow{3}{*}
-    {\textbf{PatchTST}}
-    & MSE & 0.387 & 0.400 & 0.281 & 0.326 & 0.469 & 0.454 & 0.387 & 0.407 & 0.205 & 0.290 & 0.367 & 0.404 & 0.481 & 0.304 & 0.259 & 0.281 & 0.270 & 0.307 & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-        
-    \multirow{3}{*}
-    {\textbf{TiDE}} 
-    & MSE &  0.419 & 0.419 & 0.358 & 0.404 & 0.541 & 0.507 & 0.611 & 0.550 & 0.251 & 0.344 & 0.370 & 0.413 & 0.760 & 0.473 & 0.271 & 0.320 & 0.347 & 0.417 & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-        
-    \multirow{3}{*}
-    {\textbf{DLinear}}
-    & MSE & 0.403 & 0.407 & 0.350 & 0.401 & 0.456 & 0.452 & 0.559 & 0.515 & 0.212 & 0.300 & 0.354 & 0.414 & 0.625 & 0.383 & 0.265 & 0.317 & 0.330 & 0.401 & -
-    \\ 
-    & Tilde-Q & 0.398 & 0.397 & 0.289 & 0.338 & 0.446 & 0.438 & 0.437 & 0.442 & 0.212 & 0.295 & 0.304 & 0.383 & 0.643 & 0.398 & 0.264 & 0.301 & - & - &  0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-
-    \multirow{3}{*}
-    {\textbf{Autoformer}}
-    & MSE & 0.588 & 0.517 & 0.327 & 0.371 & 0.496 & 0.487 & 0.450 & 0.459 & 0.227 & 0.338 & 0.613 & 0.539 & 0.628 & 0.379 & 0.338 & 0.382 & 0.885 & 0.711 & -
-    \\ 
-    & Tilde-Q & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & 0 
-    \\
-    & \methodName & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -
-        \\ \midrule
-        
+    MSE &
+    0.487 & 0.475 &
+    0.557 & 0.491 &
+    - & - &
+    - & - &
+    - & - &
+    0 \\
+    Tilde-Q &
+    0.461 & 0.450 &
+    0.485 & 0.450 &
+    - & - &
+    - & - &
+    - & - &
+    0 \\
+    \methodName &
+    \textcolor{red}{\textbf{0.442}} & \textcolor{red}{\textbf{0.441}} &
+    \textcolor{red}{\textbf{0.457}} & \textcolor{red}{\textbf{0.439}} &
+    - & - &
+    - & - &
+    - & - &
+    4 \\
+    \bottomrule
     \end{tabular}
     }
 \end{table*}
