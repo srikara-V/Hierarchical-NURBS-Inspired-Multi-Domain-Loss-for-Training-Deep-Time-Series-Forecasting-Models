@@ -84,7 +84,7 @@ Regenerate from `./results/` with `python paper/generate_figures.py` (see [`pape
 
 **Primary comparison:** fixed 3-layer MLP trained with **MSE**, **Tilde-Q**, or **HNMD** on ETTh1, ETTh2, ECL, Traffic, and Weather. Gains are largest on the **hourly ETT** datasets; improvements on ECL, Traffic, and Weather are smaller and sometimes horizon-dependent.
 
-### Table 1 — MLP long-horizon forecasting (varying training loss)
+### Table 1: MLP long-horizon forecasting (varying training loss)
 
 Long-horizon forecasting with a **fixed 3-layer MLP** and varying training loss. Input length is **96**; prediction lengths are **{96, 192, 336, 720}**. Each entry is the **mean test metric over all four horizons**. **Bold** marks the best MSE/MAE pair among {MSE, Tilde-Q, HNMD} for that dataset. **—** denotes a dataset–loss setting not yet complete across all four horizons. **Wins** counts completed dataset-average MSE/MAE pairs won by each loss.
 
