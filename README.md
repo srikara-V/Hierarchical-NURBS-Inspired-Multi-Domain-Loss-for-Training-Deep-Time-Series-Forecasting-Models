@@ -238,9 +238,3 @@ cd paper && pdflatex main.tex && bibtex main && pdflatex main.tex
 ```
 
 Abstract win-counts and generated tables are **auto-derived from `./results/`**, not hand-edited.
-
----
-
-## Citation
-
-If you use this code, please cite the paper (bib entry in `paper/iclr2025_conference.bib` when available).
