@@ -50,6 +50,7 @@ image = (
             "checkpoints", "results", "test_results", "data",
             "results_ablation", "results_default", "results_seeds",
             "checkpoints_ablation", "checkpoints_default", "checkpoints_seeds",
+            "modal_dispatch.log", "*.log", "paper/main.pdf", "paper/figures",
         ],
     )
 )
