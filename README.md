@@ -199,10 +199,14 @@ Force a full retrain: `--no-skip_if_done --no-resume`.
 | Script | Purpose |
 |--------|---------|
 | `run_experiments.py` | Main CLI — models, datasets, losses, seeds |
-| `filltables.py` | Build paper Tables 2–4 → `tables/filled_tables.xlsx` |
-| `paper/generate_tables.py` | LaTeX tables from `./results/` |
+| `make_job_list.py` | Build `jobs.json`: the full preprint experiment manifest (main / arch / ablation / default / seeds phases; see `EXPERIMENT_PLAN.md`) |
+| `modal_run_jobs.py` | Dispatch `jobs.json` to Modal GPU workers (`modal run --detach modal_run_jobs.py --phases main,arch,ablation,default,seeds --parallel 10`); `--benchmark` measures per-step loss overhead |
+| `modal_inventory.py` | Snapshot all metrics on the Modal volume → `volume_inventory.json` |
+| `materialize_metrics.py` | Recreate local `results*/**/metrics.npy` from `volume_inventory.json` (no large array downloads) |
+| `filltables.py` | Build Excel result tables → `tables/filled_tables.xlsx` |
+| `paper/generate_tables.py` | All paper LaTeX tables + `paper/tables/summary.json` from `./results*` |
 | `paper/generate_figures.py` | Regenerate all paper figures |
-| `modal_app.py` | Run missing jobs on Modal GPU workers |
+| `modal_app.py` | (legacy) run filltables-missing jobs on Modal |
 | `modal_setup.sh` | Upload/download artifact volumes |
 
 Shell shortcuts: `scripts/hnmd/`.
@@ -231,10 +235,13 @@ MSSD hyperparameters for MLP and DLinear load from bundled Excel tables (`HNMV_*
 ### Build paper PDF
 
 ```bash
-python filltables.py --no-run_missing
+# 1. Pull metrics from the Modal volume (small; no prediction arrays)
+modal run modal_inventory.py && python materialize_metrics.py
+
+# 2. Regenerate tables + figures from results, then compile
 python paper/generate_tables.py
 python paper/generate_figures.py
-cd paper && pdflatex main.tex && bibtex main && pdflatex main.tex
+cd paper && pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
 ```
 
-Abstract win-counts and generated tables are **auto-derived from `./results/`**, not hand-edited.
+Every table cell and figure value is **auto-derived from `./results*/`** — nothing is hand-edited. `paper/tables/summary.json` carries the headline numbers (win counts, averages) used in the text.
