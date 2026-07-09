@@ -1,0 +1,23 @@
+\begin{table*}[!t]
+    \centering
+    \caption{Context: HNMD-trained 3-layer MLP (ours, dataset averages over four horizons) next to published MSE-trained forecasters at input length 96. Baseline numbers are quoted from \citet{itransformer} and are shown for reference only --- they involve different architectures, capacities, and tuning budgets. \textbf{Bold} marks the best value per row.}
+    \label{tab:published}
+    \resizebox{0.98\textwidth}{!}{
+    \begin{tabular}{l|cc|cc|cc|cc|cc|cc}
+    \toprule
+    & \multicolumn{2}{c|}{\textbf{MLP+HNMD (ours)}} & \multicolumn{2}{c|}{iTransformer} & \multicolumn{2}{c|}{PatchTST} & \multicolumn{2}{c|}{RLinear} & \multicolumn{2}{c|}{DLinear} & \multicolumn{2}{c}{Autoformer} \\
+    Dataset & MSE & MAE & MSE & MAE & MSE & MAE & MSE & MAE & MSE & MAE & MSE & MAE \\
+    \midrule
+    ETTm1 & 0.389 & 0.401 & 0.407 & 0.410 & \textbf{0.387} & \textbf{0.400} & 0.414 & 0.407 & 0.403 & 0.407 & 0.588 & 0.517 \\
+    ETTm2 & -- & -- & 0.288 & 0.332 & \textbf{0.281} & \textbf{0.326} & 0.286 & 0.327 & 0.350 & 0.401 & 0.327 & 0.371 \\
+    ETTh1 & \textbf{0.442} & 0.441 & 0.454 & 0.447 & 0.469 & 0.454 & 0.446 & \textbf{0.434} & 0.456 & 0.452 & 0.496 & 0.487 \\
+    ETTh2 & 0.457 & 0.439 & 0.383 & 0.407 & 0.387 & 0.407 & \textbf{0.374} & \textbf{0.398} & 0.559 & 0.515 & 0.450 & 0.459 \\
+    ECL & -- & -- & \textbf{0.178} & \textbf{0.270} & 0.205 & 0.290 & 0.219 & 0.298 & 0.212 & 0.300 & 0.227 & 0.338 \\
+    Exchange & -- & -- & 0.360 & \textbf{0.403} & 0.367 & 0.404 & 0.378 & 0.417 & \textbf{0.354} & 0.414 & 0.613 & 0.539 \\
+    Traffic & -- & -- & \textbf{0.428} & \textbf{0.282} & 0.481 & 0.304 & 0.626 & 0.378 & 0.625 & 0.383 & 0.628 & 0.379 \\
+    Weather & -- & -- & \textbf{0.258} & \textbf{0.278} & 0.259 & 0.281 & 0.272 & 0.291 & 0.265 & 0.317 & 0.338 & 0.382 \\
+    Solar-Energy & -- & -- & \textbf{0.233} & \textbf{0.262} & 0.270 & 0.307 & 0.369 & 0.356 & 0.330 & 0.401 & 0.885 & 0.711 \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table*}

@@ -1,0 +1,90 @@
+{
+ "main_avg": {
+  "ETTm1": {
+   "mse": [
+    0.407,
+    0.422
+   ],
+   "tildeq": [
+    0.405,
+    0.411
+   ],
+   "mssd": [
+    0.389,
+    0.401
+   ]
+  },
+  "ETTm2": {
+   "mse": [
+    0.345,
+    0.376
+   ],
+   "tildeq": [
+    0.324,
+    0.353
+   ]
+  },
+  "ETTh1": {
+   "mse": [
+    0.487,
+    0.475
+   ],
+   "tildeq": [
+    0.461,
+    0.45
+   ],
+   "mssd": [
+    0.442,
+    0.441
+   ]
+  },
+  "ETTh2": {
+   "mse": [
+    0.557,
+    0.491
+   ],
+   "tildeq": [
+    0.485,
+    0.45
+   ],
+   "mssd": [
+    0.457,
+    0.439
+   ]
+  }
+ },
+ "main_wins_mse": {
+  "mse": 3,
+  "tildeq": 4,
+  "mssd": 13
+ },
+ "main_wins_mae": {
+  "mse": 1,
+  "tildeq": 4,
+  "mssd": 15
+ },
+ "main_complete_cells": 20,
+ "arch_wins_mse": {
+  "DLinear": {
+   "mse": 0,
+   "tildeq": 0,
+   "mssd": 0
+  },
+  "iTransformer": {
+   "mse": 0,
+   "tildeq": 0,
+   "mssd": 0
+  }
+ },
+ "ablation_mean_mse": {
+  "HNMD (full)": 0.3502,
+  "w/o time term ($\\alpha{=}0$)": null,
+  "w/o derivative term ($\\beta{=}0$)": null,
+  "w/o frequency term ($\\gamma{=}0$)": null,
+  "time term only ($\\beta{=}\\gamma{=}0$)": null,
+  "single level ($M{=}1$)": null,
+  "shallow hierarchy ($M{=}3$)": null,
+  "uniform level weights ($x{=}0$)": null,
+  "w/o decomposition ($M{=}0$)": null
+ }
+}

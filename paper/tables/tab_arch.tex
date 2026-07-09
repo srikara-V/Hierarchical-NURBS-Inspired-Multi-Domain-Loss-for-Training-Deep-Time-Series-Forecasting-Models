@@ -1,0 +1,50 @@
+\begin{table*}[!t]
+    \centering
+    \caption{Loss-function comparison for two further architectures on the ETT benchmarks (input 96, test MSE/MAE). DLinear uses HNMD hyperparameters tuned for DLinear; iTransformer reuses the MLP-tuned configurations unchanged. \textbf{Bold} marks the best value within each architecture for each row.}
+    \label{tab:arch}
+    \resizebox{0.98\textwidth}{!}{
+    \begin{tabular}{c|c|cc|cc|cc||cc|cc|cc}
+    \toprule
+    \multicolumn{2}{c|}{Model} & \multicolumn{6}{c||}{DLinear} & \multicolumn{6}{c}{iTransformer} \\
+    \midrule
+    \multicolumn{2}{c|}{Training loss} &
+    \multicolumn{2}{c|}{MSE} & \multicolumn{2}{c|}{TILDE-Q} & \multicolumn{2}{c||}{HNMD} &
+    \multicolumn{2}{c|}{MSE} & \multicolumn{2}{c|}{TILDE-Q} & \multicolumn{2}{c}{HNMD} \\
+    \multicolumn{2}{c|}{Metric} &
+    MSE & MAE & MSE & MAE & MSE & MAE & MSE & MAE & MSE & MAE & MSE & MAE \\
+    \midrule
+\multirow{5}{*}{\rotatebox{90}{ETTh1}}
+ & 96 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 192 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-14}
+ & Avg & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ETTh2}}
+ & 96 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 192 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-14}
+ & Avg & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ETTm1}}
+ & 96 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 192 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-14}
+ & Avg & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ETTm2}}
+ & 96 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 192 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-14}
+ & Avg & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\midrule    \bottomrule
+    \end{tabular}
+    }
+\end{table*}

@@ -1,0 +1,23 @@
+\begin{table*}[!t]
+    \centering
+    \caption{Ablation study (MLP, test MSE). Each component of HNMD is removed or reduced in isolation, starting from the tuned configuration of each dataset--horizon cell; cells are chosen so that all three domain weights are active in the tuned configuration. $M$ is the number of decomposition levels and $x$ the level-importance exponent. \textbf{Bold} marks the best value per column.}
+    \label{tab:ablation}
+    \resizebox{0.98\textwidth}{!}{
+    \begin{tabular}{l|cccccc|c}
+    \toprule
+    Variant & ETTh1 96 & ETTh1 336 & ETTm1 96 & ETTm1 336 & ETTm2 96 & ETTm2 336 & Mean \\
+    \midrule
+    HNMD (full) & \textbf{0.369} & \textbf{0.461} & \textbf{0.327} & \textbf{0.402} & \textbf{0.190} & \textbf{0.352} & 0.350 \\
+    \midrule
+    w/o time term ($\alpha{=}0$) & -- & -- & -- & -- & -- & -- & -- \\
+    w/o derivative term ($\beta{=}0$) & -- & -- & -- & -- & -- & -- & -- \\
+    w/o frequency term ($\gamma{=}0$) & -- & -- & -- & -- & -- & -- & -- \\
+    time term only ($\beta{=}\gamma{=}0$) & -- & -- & -- & -- & -- & -- & -- \\
+    single level ($M{=}1$) & -- & -- & -- & -- & -- & -- & -- \\
+    shallow hierarchy ($M{=}3$) & -- & -- & -- & -- & -- & -- & -- \\
+    uniform level weights ($x{=}0$) & -- & -- & -- & -- & -- & -- & -- \\
+    w/o decomposition ($M{=}0$) & -- & -- & -- & -- & -- & -- & -- \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table*}

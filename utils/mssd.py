@@ -94,12 +94,16 @@ def nurbs_decompose_time_series(time_series, cache, max_levels: int=5, degree: i
         residual *= scaling_factor
 
     decomposed_tensor = torch.stack(decomposed, dim=-1)
-    
+
     # Compute products of adjacent level pairs
     level_products = []
     for i in range(decomposed_tensor.shape[-1]-1):
         level_products.append(decomposed_tensor[..., i] + decomposed_tensor[..., i+1])
-    
+
+    if not level_products:
+        # Single-level decomposition (max_levels=1): no adjacent pairs to add.
+        return decomposed_tensor
+
     level_products_tensor = torch.stack(level_products, dim=-1)
     final_decomposition = torch.cat([decomposed_tensor, level_products_tensor], dim=-1)
 
@@ -158,10 +162,16 @@ class MSSD(nn.Module):
         device = y_pred.device
         y_true = y_true.to(device)
         y_pred = y_pred.to(device)
-        
-        deconstructed_true = nurbs_decompose_time_series(y_true,self.cache, self.max_levels, degree=self.degree, threshold=self.threshold, scaling_factor=self.residual_scaling_factor, knot_scaling_factor=self.knot_scaling_factor)
-        
-        deconstructed_pred = decompose_and_reconstruct(y_pred, self.cache, deconstructed_true, self.max_levels, exponent=self.spline_criterion_exponent, degree=self.degree, threshold=self.threshold, scaling_factor=self.residual_scaling_factor, knot_scaling_factor=self.knot_scaling_factor)
+
+        if self.max_levels == 0:
+            # Ablation mode: multi-domain supervision on the raw series with no
+            # spline decomposition and no level-importance gradient weighting.
+            deconstructed_true = y_true.unsqueeze(-1)
+            deconstructed_pred = y_pred.unsqueeze(-1)
+        else:
+            deconstructed_true = nurbs_decompose_time_series(y_true,self.cache, self.max_levels, degree=self.degree, threshold=self.threshold, scaling_factor=self.residual_scaling_factor, knot_scaling_factor=self.knot_scaling_factor)
+
+            deconstructed_pred = decompose_and_reconstruct(y_pred, self.cache, deconstructed_true, self.max_levels, exponent=self.spline_criterion_exponent, degree=self.degree, threshold=self.threshold, scaling_factor=self.residual_scaling_factor, knot_scaling_factor=self.knot_scaling_factor)
         #deconstructed_true = decompose_and_reconstruct(y_true, y_true, self.max_levels)
 
         mae_loss = torch.abs(

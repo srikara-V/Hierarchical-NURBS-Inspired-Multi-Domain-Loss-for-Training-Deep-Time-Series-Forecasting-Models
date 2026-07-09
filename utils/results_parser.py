@@ -63,12 +63,23 @@ def parse_setting_name(folder_name: str) -> Optional[Dict[str, str]]:
     if len(parts) < 4:
         return None
 
-    model = parts[-3]
-    data = parts[-2]
-    data_path = parts[-1]
-    model_id = "_".join(parts[:-3])
+    # Prefix layout is "{model_id}_{model}_{data}_{data_path}". `data_path` may
+    # itself contain underscores (exchange_rate, solar_AL), so locate the model
+    # by the last occurrence of a known model token instead of a fixed offset.
+    model_idx = None
+    for i in range(len(parts) - 2, 0, -1):
+        if parts[i] in KNOWN_MODELS:
+            model_idx = i
+            break
+    if model_idx is None or model_idx + 1 >= len(parts):
+        return None
 
-    if model not in KNOWN_MODELS:
+    model = parts[model_idx]
+    data = parts[model_idx + 1]
+    data_path = "_".join(parts[model_idx + 2 :])
+    model_id = "_".join(parts[:model_idx])
+
+    if not data_path:
         return None
 
     parsed = match.groupdict()

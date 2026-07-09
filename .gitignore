@@ -134,6 +134,23 @@ data/
 
 # Experiment artifacts (generated locally; too large for GitHub)
 checkpoints/
+checkpoints_ablation/
+checkpoints_default/
+checkpoints_seeds/
 results/
+results_ablation/
+results_default/
+results_seeds/
 test_results/
 .DS_Store
+
+# Local run logs
+modal_dispatch.log
+
+# LaTeX build artifacts (main.pdf is committed intentionally)
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.toc

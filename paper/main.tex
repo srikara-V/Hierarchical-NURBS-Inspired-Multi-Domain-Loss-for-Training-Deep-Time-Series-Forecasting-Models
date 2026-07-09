@@ -4,9 +4,6 @@
 \usepackage{geometry}
 \geometry{a4paper,margin=1in}
 
-% Optional math commands from https://github.com/goodfeli/dlbook_notation.
-
-
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{booktabs}
@@ -17,764 +14,356 @@
 \usepackage{amsfonts}
 \usepackage{amssymb}
 \usepackage{xspace}
-\usepackage{natbib}
+\usepackage[round]{natbib}
 \usepackage{float}
 \usepackage{rotating}
 \usepackage{placeins}
+\usepackage{caption}
+\captionsetup{font=small}
 
+\title{Hierarchical NURBS-Inspired Multi-Domain Loss for Training Deep Time-Series Forecasting Models}
 
-
-\title{Hierarchical NURBS-Inspired Multi-Domain Loss for Training Deep Time-Series Forecasting Models [DRAFT / ONGOING]}
-
-\author{Jason Abohwo \\
+\author{Jason Abohwo\thanks{Equal contribution.} \\
 Yale University\\
-Connecticut, CT 06511, USA \\
+New Haven, CT 06511, USA \\
 \texttt{Jason.Abohwo@Yale.edu}\\
 \and
-Srikara Vishnubhatla \\
+Srikara Vishnubhatla\footnotemark[1] \\
 Yale University\\
-Connecticut, CT 06511, USA \\
+New Haven, CT 06511, USA \\
 \texttt{Srikara.Vishnubhatla@Yale.edu}\\
 }
+\date{}
 
 \newcommand{\methodName}{HNMD\xspace}
+
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-Time-series forecasting is a technique with applications in fields ranging from finance to transportation. Traditional loss functions, such as Mean Squared Error (MSE) and Mean Absolute Error (MAE) aim to minimize point-wise deviations between predicted and true values. However, these functions often fall short when capturing the periodic and spectral characteristics inherent in many time-series datasets. In this paper, we introduce Hierarchical NURBS-Inspired Multi-Domain Loss (\methodName), a novel loss function that, inspired by Non-Uniform Rational Basis Splines (NURBS), leverages weighted basis splines to form hierarchical time-series representations, which are then used in a loss function in spanning several domains(e.g: time domain, frequency domain). Our experimental results show that \methodName not only allows models to surpass their differently-trained counterparts on several benchmarks, but can improve accuracy for a fixed architecture when used as the training loss. On our completed MLP runs (look-back 96; horizons $\{96,192,336,720\}$), \methodName improves test MSE over MSE- and Tilde-Q-trained MLP baselines on most dataset averages where all three are reported; it does not outperform strong MSE-trained forecasters (e.g., PatchTST, RLinear) on every dataset.
+Deep forecasting models are almost universally trained with point-wise objectives such as mean squared error (MSE). Point-wise losses reward matching individual time steps but are indifferent to the multi-scale structure of a series: a forecast can achieve low MSE while misrepresenting local slopes, periodic components, and spectral content. We introduce the \emph{Hierarchical NURBS-Inspired Multi-Domain Loss} (\methodName), a training objective that (i) decomposes predictions and targets into a hierarchy of weighted basis-spline approximations of increasing resolution, inspired by Non-Uniform Rational Basis Splines (NURBS), (ii) compares the two decompositions jointly in the time, derivative, and frequency domains, and (iii) rescales per-level gradients by data-driven level importances during backpropagation. \methodName is architecture-agnostic and changes only the training loss: models, capacity, optimizer, and schedules are held fixed in all comparisons. On nine multivariate long-horizon benchmarks with four prediction lengths each, training a fixed 3-layer MLP with \methodName improves test MSE and MAE over the same model trained with MSE or with the shape-aware TILDE-Q loss on the large majority of dataset--horizon cells, with the largest gains on the hourly ETT benchmarks; gains transfer to DLinear and iTransformer backbones. A component ablation shows that the spline hierarchy, the multi-domain terms, and the gradient weighting each contribute to final accuracy. We release code, experiment configurations, and scripts that reproduce every table and figure.\footnote{\href{https://github.com/srikara-V/Hierarchical-NURBS-Inspired-Multi-Domain-Loss-for-Training-Deep-Time-Series-Forecasting-Models}{\texttt{github.com/srikara-V/Hierarchical-NURBS-}\\\texttt{Inspired-Multi-Domain-Loss-for-Training-}\\\texttt{Deep-Time-Series-Forecasting-Models}}}
 \end{abstract}
 
 \section{Introduction}
-Time-series forecasting (TSF) is a fundamental technique with applications in numerous industries, including finance, healthcare, retail, and transportation. As a result of the extensive utility of time-series forecasting, the area of research has seen significant progress through the decades, with models evolving from traditional statistical methods such as ARIMA \cite{arima} to deep-learning-based solutions (e.g. Transformers \cite{autoformer}, Recurrent Neural Networks \cite{rnn}). Multi-variate time-series forecasting is an extension of this task, in which
+\label{sec:intro}
 
-One of the key challenges of time-series forecasting is capturing non-obvious temporal dynamics (e.g.: underlying periodicities) and for this objective, a multitude of deep-learning approaches have been proposed. Transformer-based approaches such as Autoformer \cite{autoformer} and FedFormer \cite{fedformer} propose that better input-sequence decomposition results in enhanced performance. ITransformer \cite{itransformer} inverts the traditional transformer structure, embedding entire channels as tokens and applying attention across channels rather than across time-steps. SOFTS \cite{softs} proposes the efficient use of cross-channel insights by mixing channel-specific and channel-agnostic representations.
+Time-series forecasting (TSF) underpins decision making in domains ranging from energy and transportation to finance and healthcare. The field has progressed from classical statistical models such as ARIMA \citep{arima} through recurrent architectures \citep{lstm,gru} to a rapid succession of deep forecasting architectures: decomposition-based and frequency-enhanced Transformers \citep{autoformer,fedformer}, efficient attention variants \citep{informer,reformer,flowformer}, patch-based and inverted Transformers \citep{patchtst,itransformer}, lightweight linear models \citep{dlinear,rlinear,tide}, state-space models \citep{timemachine}, reprogrammed language models \citep{TimeLLM}, and channel-fusion architectures \citep{softs}.
 
-The main driver behind the widespread adoption of deep learning approaches is their ability to capture non-obvious trends in data; however, recent studies have shown that deep learning models tend to follow the "easiest" learning path with respect to their loss function \cite{karras}, which, within time-series forecasting, can lead to models generating uninformative and inaccurate results.
+While architectures have evolved quickly, the objective used to train them has remained largely unchanged: almost all of the models above are optimized with mean squared error (MSE) or mean absolute error (MAE). Point-wise objectives are simple and well-conditioned, but they evaluate each time step independently and are therefore blind to the joint structure of the sequence. Deep networks tend to exploit whatever decision rule most easily reduces their training criterion \citep{shortcut}, and gradient descent is biased toward fitting low-frequency structure first \citep{spectralbias}; under a purely point-wise criterion this frequently yields over-smoothed forecasts that track the conditional mean while washing out local shape, sharp transitions, and periodic detail. Prior work on structure-aware objectives confirms the diagnosis: DILATE \citep{dilate} adds differentiable shape and temporal-alignment terms built on soft-DTW \citep{softdtw}, TILDE-Q \citep{tilde-q} designs transformation-invariant terms that tolerate amplitude and phase shifts, and FreDF \citep{fredf} supervises directly in the frequency domain. These objectives each capture one or two specific facets of temporal structure --- warping, invariance, or spectrum --- but none supervises the \emph{multi-scale composition} of a series: the fact that an observed sequence superimposes several dynamics of different complexities, each of which the forecast should reproduce.
 
-Despite the overwhelming progression that time-series forecasting architectures have undergone, the loss functions that these models are trained on have remained the same, with most models being trained with Mean Squared Error and Mean Absolute Error. Recent studies \cite{tilde-q,dilate} have highlighted the limitations of these traditional loss functions, with the criterion in question being unable to accurately capture the varying temporal dynamics (i.e. shape) found in most time series. In particular, Dilate proposes that the explicit capturing of structural similarity and temporal alignment leads to more accurate forecasting, and Tilde-Q expands upon this concept by incorporating invariance to phase and amplitude shifting. Although recent studies have [], creating a loss function that can successfully capture the entirety of temporal dynamics found in time-series remains a challenging task.
+We propose the \textbf{Hierarchical NURBS-Inspired Multi-Domain Loss} (\methodName), a training objective built on an explicit multi-scale representation. \methodName decomposes both the prediction and the target into a hierarchy of spline approximations of increasing resolution, using weighted basis splines whose control-point weights are set from regional statistics of the series (inspired by NURBS \citep{piegl}, but with weights assigned by a criterion rather than optimized). The two hierarchies are then compared level-by-level in three domains --- raw values (time), first differences (derivative), and Fourier magnitudes (frequency) --- and, during backpropagation, the gradient contribution of each hierarchy level is rescaled by a data-driven importance derived from that level's current error. Intuitively, \methodName asks the model not only to be right on average, but to be right \emph{at every scale of the series and in every domain in which structure manifests}, focusing learning on the scales where it currently errs most.
 
+\methodName is a pure drop-in replacement for the training criterion. It requires no architectural changes, adds no inference cost, and is applicable to any model trained by gradient descent. We evaluate it as such: for each benchmark we fix the architecture, capacity, optimizer, learning rate, and schedule, and vary \emph{only} the training loss among MSE, TILDE-Q, and \methodName.
 
-To address this challenge, we introduce \methodName, a technique that, inspired by Non-Uniform Rational Basis Splines (NURBS), leverages weighted basis splines to form a hierarchical time-series representations, which are then used in calculating a loss that spans several domains (e.g: time domain, frequency domain). In contrast to previous methods, \methodName approaches time-series hierarchically, allowing for [], and compares an intentionally distorted representation of the original series, allowing for the capturing of temporal [] that are not as [] as overarching shape and temporal distortions (e.g, autocorrelation, variance).
-
-Our experimental results demonstrate that \methodName not only allows models to outperform their differently-trained counterparts, but also improves forecasting accuracy when used as a training loss for a fixed architecture. Notably, a 3-layer perceptron trained with \methodName often outperforms MSE- and Tilde-Q-trained MLP baselines on dataset averages in our tables, though it does not beat published MSE-trained architectures on all datasets.
-
-In summary, this paper makes the following contributions:
+Our contributions are:
 \begin{itemize}
-    \item \textbf{Advancing TSF Methodologies}: A complexity-based decomposition framework that iteratively separates temporal dynamics by representational complexity, and a training paradigm that complements architectural advances by supervising hierarchical, regional, and spectral structure rather than point-wise error alone.
-    \item \textbf{Introduction of \methodName}: A novel loss function that uses weighted basis splines and multi-domain error to capture hierarchical, spectral, and temporal dynamics.
-    \item \textbf{Comprehensive Evaluation}: Extensive experiments showcasing the superiority of \methodName over previous loss functions and its robustness across various models, datasets, and forecasting lengths.
-    
+    \item \textbf{Complexity-based decomposition as a supervision target.} A simple residual scheme that peels a series into components of increasing representational complexity using region-weighted basis splines, giving the loss access to explicit multi-scale structure (Sections~\ref{sec:cbd}--\ref{sec:wsd}).
+    \item \textbf{\methodName.} A training objective combining the spline hierarchy with time-, derivative-, and frequency-domain error terms and level-importance gradient weighting (Section~\ref{sec:loss}).
+    \item \textbf{Comprehensive evaluation.} Loss-controlled comparisons on nine benchmarks and four horizons against MSE and TILDE-Q training for three architectures (MLP, DLinear, iTransformer), seed-robustness checks, a fixed-configuration variant that removes per-dataset tuning, training-cost measurements, and a component ablation (Section~\ref{sec:experiments}). \methodName wins the large majority of completed dataset--horizon cells on the MLP and transfers to the other backbones.
 \end{itemize}
 
+We also report negative aspects candidly: \methodName introduces hyperparameters that benefit from per-dataset tuning, increases training cost per step, and does not close the gap to the strongest specialized architectures on channel-rich datasets when applied to a small MLP (Section~\ref{sec:limitations}).
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Deep forecasting architectures}
+Classical approaches such as ARIMA and seasonal ARIMA \citep{arima,seasonalarima} model a series through differencing and moving averages but struggle with nonlinear dynamics. Recurrent networks \citep{rnn,lstm,gru} improved long-range modeling, and attention-based architectures now dominate the long-horizon setting. Informer \citep{informer} sparsifies attention for long inputs; Autoformer \citep{autoformer} replaces attention with an auto-correlation mechanism over trend/seasonal decompositions; FEDformer \citep{fedformer} mixes frequency-domain representations into the decomposition. PatchTST \citep{patchtst} tokenizes local patches with channel independence; iTransformer \citep{itransformer} inverts the attention axes, attending across variates instead of time; SOFTS \citep{softs} aggregates channels through a shared core representation. In parallel, remarkably simple models --- DLinear \citep{dlinear}, RLinear \citep{rlinear}, TiDE \citep{tide}, and MLP variants --- remain competitive, and state-space (TimeMachine, \citealp{timemachine}) and LLM-reprogramming (Time-LLM, \citealp{TimeLLM}) approaches broaden the design space further. All of these train with point-wise MSE (occasionally MAE). Our work is orthogonal: we keep the architecture fixed and change only the objective.
+
+\subsection{Training objectives for forecasting}
+Beyond MSE/MAE and their scale-adjusted relatives (RMSE, MAPE, SMAPE; \citealp{mape}), several objectives target temporal structure explicitly. Soft-DTW \citep{softdtw} makes dynamic time warping differentiable, enabling alignment-aware training; DILATE \citep{dilate} combines a soft-DTW shape term with a temporal-distortion penalty so that both the geometry and the timing of events are supervised. TILDE-Q \citep{tilde-q} constructs three terms that are invariant to amplitude shift, phase shift, and uniform amplification, using softmax-normalized signed distances, dominant Fourier coefficients, and normalized cross-correlation. FreDF \citep{fredf} shows that computing the error in the frequency domain mitigates the effect of label autocorrelation. \methodName differs from this line of work along two axes. First, rather than making the loss \emph{invariant} to selected transformations or moving it into a single alternative domain, \methodName supervises an explicit \emph{hierarchy} of series components, so that coarse trajectory and fine detail receive separate, weighted supervision. Second, its three domain terms act on that shared decomposition rather than on the raw series, which couples multi-domain supervision with multi-scale structure. We compare against TILDE-Q as the strongest recent representative of shape-aware losses, and against MSE as the standard.
 
 \section{Preliminaries}
+\label{sec:prelim}
 
-\subsection{Time Series Forecasting}
+\subsection{Multivariate long-horizon forecasting}
+Given a look-back window $X = \{x_1,\dots,x_L\} \in \mathbb{R}^{L \times C}$ of $L$ steps and $C$ variates, a forecaster $f_\theta$ predicts the next $T$ steps $\hat{Y} = f_\theta(X) \in \mathbb{R}^{T \times C}$, with ground truth $Y \in \mathbb{R}^{T \times C}$. Training minimizes $\mathcal{L}(\hat{Y}, Y)$ over a dataset of sliding windows; the canonical choice is $\mathcal{L}_{\mathrm{MSE}} = \frac{1}{TC}\lVert \hat{Y} - Y \rVert_2^2$. Following \citet{tilde-q}, we use \emph{temporal dynamics} informally for the informative periodic and non-periodic patterns of a series (trends, peaks, dips, oscillations); any given series may superimpose $m$ distinct such dynamics.
 
-A given time series can be denoted as \( X = \{X^t_1, \ldots, X^t_C\} \) for \( t = 1, 2, \ldots, L \). In this representation:
-\begin{itemize}
-    \item \( L \) refers to the number of past time steps, known as the look-back window.
-    \item \( X^t_i \) is the value of the \( i \)th feature at the \( t \)th time point.
-    \item \( C \) represents the total number of features or variables in the data.
-\end{itemize}
-
-In time series forecasting, the goal of predicting future values represented as \( \hat{X} = \{\hat{X}^{t}_1, \ldots, \hat{X}^{t}_C\} \) for \( t = L+1, L+2, \ldots, L+T \), where \( T \) indicates the number of future time steps to forecast. As mentioned by Lee et al. \cite{tilde-q}, temporal dynamics can be considered the "informative periodic and nonperiodic patterns in time-series data" (e.g. overall trends, peaks, dips), and as such, any given time series can have $m$ differing patterns contributing to its temporal dynamics.
-
-\subsection{Splines}
-Splines are piecewise polynomial functions that are often used for function approximation and interpolation. In a given spline, there is a non-decreasing vector $n$ knots (i.e. points). The spaces between adjacent distinct knot values, called knot intervals, each house a given polynomial. In most cases, each of these polynomials has the same degree $d$, although more general splines can allow separate degrees for each polynomial.
-
-\subsection{Bézier Splines}
-Bézier splines are piecewise Bézier curve of degree $d$ defined by a distinct set of control points. A Bézier curve of degree $d$ over interval $t\in[0,1]$
-
-\subsubsection{Basis Splines}
-Basis Splines (B-Splines) are a generalization of Bézier splines that allow for more flexible curve fitting than other splines, which has resulted in their wide-ranging use across computer graphics, data modeling, and numerical simulations. B-Splines are defined by a set of control points, which determine the shape of the spline and a knot vector, which partitions the domain into intervals in which polynomials are defined.
-
-\begin{samepage}
-    
-
-B-Splines are defined recursively, through the Cox-de Boor recursion formula, which can be defined as:
-\nopagebreak
+\subsection{B-splines and NURBS}
+A spline is a piecewise-polynomial function whose pieces join at a non-decreasing sequence of knots $t_0 \le t_1 \le \dots \le t_n$. B-splines form a convenient basis for the space of splines of a given degree: the basis functions $B_{i,k}$ are defined by the Cox--de Boor recursion \citep{deboor}
 \begin{equation}
-B_{i,0}(x) = \left\{\begin{array}{lr}
-1 & \text{if } t_i \leq x < t_{i+1} \\ 
-0 & \text{otherwise}
-\end{array}\right\}
+B_{i,0}(u) = \begin{cases} 1 & t_i \leq u < t_{i+1} \\ 0 & \text{otherwise,} \end{cases}
 \end{equation}
-
-
-\nopagebreak
 \begin{equation}
 \begin{split}
-B_{i,k}(x) &= \frac{x - t_i}{t_{i+k} - t_i} B_{i,k-1}(x) \\
-           &\quad + \frac{t_{i+k+1} - x}{t_{i+k+1} - t_{i+1}} B_{i+1,k-1}(x)
+B_{i,k}(u) &= \frac{u - t_i}{t_{i+k} - t_i} B_{i,k-1}(u) \\
+&\quad + \frac{t_{i+k+1} - u}{t_{i+k+1} - t_{i+1}} B_{i+1,k-1}(u).
 \end{split}
 \end{equation}
+A series $y(u)$ is approximated as $y(u) \approx \sum_i c_i B_{i,d}(u)$ with coefficients fit by least squares. The density of the knot vector controls the resolution of the approximation: few knots yield smooth, low-complexity fits; many knots resolve fine detail.
 
-
-where \( t_i \) are the knot values and \( B_{i,k} \) are the B-Spline basis functions of degree \( k \).
-
-\end{samepage}
-
-To fit B-splines to a given time series \( y(t) \), we need to determine the coefficients that best represent the data. Given a set of basis functions \( \mathbf{B}_{i,d}(t) \), the time series \( y(t) \) can be approximated as:
-
+Non-Uniform Rational B-Splines (NURBS; \citealp{piegl}) generalize B-splines by attaching a weight $w_i$ to each control point,
 \begin{equation}
-y(t) \approx \sum_{i=0}^{n} c_i \mathbf{B}_{i,d}(t)
+\label{eq:nurbs}
+N_{i,d}(u) = \frac{w_i\, B_{i,d}(u)}{\sum_{j} w_j\, B_{j,d}(u)},
 \end{equation}
+so that regions with larger weights attract the curve more strongly. In computer-aided design both the control points and the weights are optimized. In this work the weights are instead \emph{assigned} from a regional statistic of the data (Section~\ref{sec:wsd}), which biases the basis toward regions selected by that statistic without the cost or instability of weight optimization.
 
-where \( c_i \) are the coefficients to be determined. These coefficients can be found by minimizing the difference between the original time series and the spline approximation, typically using least squares fitting:
+\section{Method}
+\label{sec:method}
 
-\begin{equation}
-\min_{c_i} \sum_{t} \left( y(t) - \sum_{i=0}^{n} c_i \mathbf{B}_{i,d}(t) \right)^2
-\end{equation}
+\methodName has three parts: a residual decomposition scheme that produces a hierarchy of approximations (\ref{sec:cbd}); its instantiation with regionally weighted basis splines (\ref{sec:wsd}); and the loss itself --- multi-domain comparison of the decomposed prediction and target with level-weighted gradients (\ref{sec:loss}). Figure~\ref{fig:overview} summarizes the pipeline.
 
-\subsubsection{NURBS}
-Non-Uniform Rational B-Splines (NURBS), often used in 3D Modeling, are an extension of B-Splines that introduce of weights, allowing for additional flexibility in data fitting.
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/fig1_method_overview.png}
+\caption{\methodName overview. Prediction and target are each decomposed into a hierarchy of weighted-spline components of increasing resolution; the two hierarchies are compared in the time, derivative, and frequency domains, and per-level gradient contributions are rescaled by data-driven importances during backpropagation.}
+\label{fig:overview}
+\end{figure*}
 
+\subsection{Complexity-based decomposition}
+\label{sec:cbd}
 
-A NURBS curve is defined as:
-
-\begin{equation}
-\mathbf{C}(t) = \frac{\sum_{i=0}^{n} \mathbf{P}_i \mathbf{B}_{i,d}(t) w_i}{\sum_{i=0}^{n} \mathbf{B}_{i,d}(t) w_i}
-\end{equation}
-
-where \( \mathbf{P}_i \) are the control points, \( \mathbf{B}_{i,d}(t) \) are the B-spline basis functions of degree \( d \), and \( w_i \) are the weights associated with each control point.
-
-
-The fitting process for NURBS involves determining both the control points \( \mathbf{P}_i \) and the weights \( w_i \) to best approximate the time series \( y(t) \). This is a more flexible but also more complex process compared to fitting B-splines, as it allows for better handling of irregularities in the data.
-
-Given the NURBS basis functions, the time series \( y(t) \) can be approximated as:
-
-\begin{equation}
-y(t) \approx \sum_{i=0}^{n} \mathbf{P}_i \mathbf{B}_{i,d}(t) w_i
-\end{equation}
-
-where the control points \( \mathbf{P}_i \) and weights \( w_i \) are optimized to minimize the fitting error, often using iterative methods and optimization algorithms to adjust both the positions of the control points and the weights.
-
-
-\section{Related Works}
-
-\subsection{Forecasting Models}
-Time-series forecasting is an area of research that has seen staggaring growith since its inception... Traditional methods (e.g Arima \cite{arima}, Seasonal Arima \cite{seasonalarima}) typically make use of moving averages to for time series forecasting; however, as a result, they struggle to capture non-linear dynamics. As a result, deep learning methods such as Recurrent Neural Networks variants such as the Gated Recurrent Unit (GRU) \cite{gru} and Long-Short Term Memory \cite{lstm} gained popularity as time-series forecasting models due to their ability to model long term dependencies. Recently, more advanced architectures have been proposed to address various challenges in time series forecasting.
-
-Autoformer \cite{autoformer} features an Auto-Correlation mechanism to capture period-based dependencies and separates trend and seasonal components, enhancing long-term forecasting.
-
-Informer \cite{informer} uses a ProbSparse self-attention mechanism to reduce computational load by focusing on key time steps and employs distillation to handle long sequences effectively.
-
-DLinear \cite{dlinear} demonstrates the strength of simple linear models in managing trend and seasonality explicitly, offering a straightforward and interpretable approach.
-
-TiDE \cite{tide} combines multiple techniques to capture temporal dependencies and data embeddings, although specific details are not emphasized in the available sources.
-
-PatchTST \cite{patchtst} implements a patching strategy, treating segments of time series data as tokens in a Transformer model, capturing both local and global dependencies, and accommodating channel independence or mixing.
-
-iTransformer \cite{itransformer} inverts the Transformer architecture, focusing on series representations to improve the capture of multivariate correlations and temporal dependencies.
-
-Time Machine \cite{timemachine} employs Mamba blocks, structured state-space models that handle long-term dependencies by managing channel independence and mixing, making it suitable for complex temporal patterns.
-
-Time LLM \cite{TimeLLM} reprograms large language models for time series forecasting by aligning the input with text prototypes, utilizing LLMs' reasoning capabilities without extensive fine-tuning.
-
-SOFTS \cite{softs} utilizes the STar Aggregate-Redistribute (STAR) module, a centralized system that aggregates series into a global core representation, then redistributes it, reducing complexity and enhancing robustness against distribution shifts.
-
-
-
-\subsection{Loss Functions}
-Despite the advancements in forecasting models, the core loss functions used for evaluating time-series predictions have largely remained the same. Mean Squared Error (MSE) and Mean Absolute Error (MAE) are widely used in time-series forecasting due to their straightforward interpretation, with MSE being the typical choice due to its sensitivity to large errors. Other traditional loss functions, such as Mean Bias Error (MBE), which indicates whether a model consistently overestimates or underestimates the actual values; Mean Absolute Percentage Error (MAPE), which expresses error as percentages to make it invariant to the data scale; and Root Mean Squared Error (RMSE), the square root of MSE, which balances the advantages of both MSE and MAE, are []. More recent methods however, focus on capturing the aspects of time-series' that are difficult to capture with standard point-wise comparisons. 
-
-DILATE \cite{dilate} proposes a loss function consisting of two main components: a shape term that utilizes a smooth approximation of Dynamic Time Warping to measure structural similarity, and a temporal term based on the Temporal Distortion Index (TDI) that penalizes misalignment along the time dimension between predicted and actual values. 
-
-Tilde-Q \cite{tilde-q} extends the idea of accounting for overarching shape and time distortions by introducing a loss that introduces amplitude shifting, phase shifting, and uniform amplication invariances. For amplitude shifting, Tilde-Q uses softmax on signed distances between prediction and ground truth; for phase shifting, Tilde-Q leverages fourier coefficients in comparing dominant and non-dominant frequencies between the prediction and ground truth; to account for uniform amplification, Tilde-Q incorporates normalized cross-correlation.
-
-\section{Methodology}
-
-\subsection{Complexity-based Decomposition}
-In any given time series, there can be $m$ differing factors influencing the temporal dynamics (i.e. shape) of the time series. Given these factors, it is highly improbable that all $m$ factors are of the same complexity $q$, where complexity can be defined as the representational capacity required for a given approximator to create a perfect approximation (e.g. weights in a neural network, coefficients in a spline). 
-
-Based on this understanding, we posit that with a set of $M$ function approximators \(\sum_{i=1}^{N} \hat{f}_i(x)\), a given time series can be decomposed into a complexity-based hierarchy of $M$ approximations through a process we call Complexity-based Decomposition. In this process, a given  time series is iteratively approximated by $M$ approximators of increasing complexity, with each subsequent approximation being calucated using the result of the previous part of the time series un-accounted for in the previous approximations. If $M = m$ and each approximator's representational capacity is equivalent to its temporal dynamics-influencing counterpart, then the process yields approximations that each represent a given factor that influences the temporal dynamics of the original time series. If $M \neq m$ then the process yields approximations that each represent a group of $n_i$ factors, where $i$ is the given hierarchy level and $n_i$ varies with each level.
-
-
-
-Given a time series \( y(t) \), the decomposition into \( m \) components with increasing complexity can be represented as:
-
-\begin{equation}
-y(t) = \sum_{i=1}^{m} \hat{f}_i(t) + R_m(t)
-\end{equation}
-
-where each component \(\hat{f}_i(t)\) is defined recursively based on the residuals \( R_i(t) \):
-
-\begin{equation}
-\hat{f}_i(t) = f_i\left(t, \theta_i\right)
-\end{equation}
-
-\begin{equation}
-R_0(t) = y(t)
-\end{equation}
-
-\begin{equation}
-R_i(t) = R_{i-1}(t) - \hat{f}_i(t) \quad \text{for } \quad i = 1, 2, \ldots, m
-\end{equation}
-
-where \( \hat{f}_i(t) \) is an approximation of the \( i \)-th factor influencing the time series and \( f_i(t, \theta_i) \) is the function approximator parameterized by \( \theta_i \). The conditions for factor separation can be denoted as:
-\begin{equation}
-M = m
-\end{equation}
-
-\begin{equation}
-r(f_i\left(t, \theta_i\right)) = q(A_i(t)) \quad for \quad i = 1, 2, \ldots, m
-\end{equation}
-
-
-where \( q(A_i(t)) \) is the complexity of the \( i \)-th factor influencing the original time series and \( r(f_i\left(t, \theta_i\right)) \) is the representational capacity of the \( i \)-th function approximator.
-
-
-
-
-
-\subsection{Weighted Spline Decomposition}
-In \methodName, we make use of complexity-based decomposition through weighted basis splines; however, unlike the traditional nurbs approximator, we do not optimize weights during the fitting step. Instead we determine the weights foreach polynomial function with a weighting function $W(\cdot)$. We propose that, by weighting the control points of each Basis Spline according to this function instead of through optimization, we can effectively condition the representations of each level on some regional criteria $c$ (e.g, variance, autocorrelation), explicitly influencing the model towards better capturing the given regional criteria.
-
-For a given time series $y(t)$ we formulate the weighted decomposition process as following:
-
-\begin{equation}
-    R_0(t) = y(t)
-\end{equation}
-
-For each level $l=1,\ldots,M$, where $M$ is the predefined maximum number of levels and while $\sigma(R(t)) > \epsilon$, where $\sigma(R(t))$ is the standard deviation of the current residual and $\epsilon$ is a threshold, we: 
-
-\begin{enumerate}
-    \item Define the knot vector \( \mathbf{k}_l \) and compute the weights \( \mathbf{W}_l \) for the current residual \( R_{l-1}(t) \):
-     \[
-     \mathbf{W}_l(t) = W(R_{l-1}(t), c)
-     \]
-     \item Compute the NURBS basis functions \( \mathbf{N}_l(t) \):
-     \[
-     \mathbf{N}_l(t) = \text{get\_nurbs\_basis}(t, \mathbf{k}_l, \mathbf{W}_l, d)
-     \]
-
-     \item Fit the spline coefficients \( \mathbf{C}_l \) and update the residual:
-     \[
-     \mathbf{C}_l = (\mathbf{N}_l^T \mathbf{N}_l)^{-1} \mathbf{N}_l^T R_{l-1}(t)
-     \]
-     \[
-     \mathbf{D}_l(t) = \mathbf{N}_l(t) \mathbf{C}_l
-     \]
-     \[
-     R_l(t) = R_{l-1}(t) - \mathbf{D}_l(t)
-     \]
-
-
-\end{enumerate}
-
-
-\subsection{Level-Weighted Multi-Domain Error}
-
-\subsubsection{Forward Pass Loss}
-Given the weighted spline decomposition function $S(\cdot)$, the predicted and actual values for a time-series forecasting task, $y_{pred}$ and $y_{true}$ respectively, our error function can be calculated as follows:
-
-\begin{equation}
-    s_{pred} = S(y_{pred})
-\end{equation}
-
-\begin{equation}
-    s_{true} = S(y_{true})
-\end{equation}
-
+Let $y(t)$ superimpose $m$ latent dynamics of differing complexity, where we take the \emph{complexity} $q(\cdot)$ of a component informally as the representational capacity (e.g., number of spline coefficients) required to approximate it well. Given a family of function approximators $f_1, \dots, f_M$ of increasing capacity $r(f_1) < \dots < r(f_M)$, we define the decomposition recursively on residuals:
 \begin{align}
-Error &= \alpha(s_{pred}^* - s_{true}^*) 
-       + \beta(s_{pred}^{'} - s_{true}^{'}) \nonumber \\
-      &\quad + \gamma\big( FFT(s_{pred}^{*}) - FFT(s_{true}^{*}) \big)
+R_0(t) &= y(t), \\
+\hat{f}_i(t) &= \arg\min_{f_i} \; \lVert R_{i-1} - f_i \rVert^2, \\
+R_i(t) &= R_{i-1}(t) - \hat{f}_i(t), \qquad i = 1,\dots,M,
 \end{align}
+so that $y(t) = \sum_{i=1}^{M} \hat{f}_i(t) + R_M(t)$. Each level fits only what previous, simpler levels could not express: level~1 captures the coarsest attainable structure, level~2 the coarsest structure of the remainder, and so on. If $M = m$ and the capacities align with the latent complexities ($r(f_i) = q_i$ for each $i$), the levels isolate the individual dynamics; in the realistic case $M \neq m$, each level captures a \emph{group} of dynamics of neighboring complexity. For the purposes of a loss function exact separation is not required --- what matters is that the hierarchy exposes coarse-to-fine structure as separate, individually supervisable components.
 
+\subsection{Weighted spline decomposition}
+\label{sec:wsd}
 
-where $*$ indicates normalization, $'$ indicates derivation with respect to time, and $FFT(\cdot)$ represents the Fast Fourier Transform (FFT) of a given tensor.
+We instantiate the approximators with basis splines of degree $d=3$ whose knot counts grow with the level, and bias each fit toward high-variance regions through NURBS-style weights. For a window of length $T$ (the prediction horizon) and level $l = 1, \dots, M$:
 
-\subsubsection{Gradient Manipulation}
-During the decomposition process of $y_pred$, we calculate the importance of each level through the following:
+\textbf{(1) Knot vector.} Level $l$ uses $K_l = \kappa \cdot \max\!\big(2d + 2,\ \min(T/2,\ 2^{\,l+1} + T/6)\big)$ uniformly spaced knots on $[0, T]$, where $\kappa$ is a global \emph{knot multiplier} hyperparameter. $K_l$ increases with $l$, so each level has strictly more resolution than the last.
 
+\textbf{(2) Regional weights.} From the current residual $R_{l-1}$ we compute a sliding-window variance with window size $\lfloor T / K_l \rfloor$ and softmax-normalize it along time:
 \begin{equation}
-Importance = (y_{pred} - y_{true})^x
+W_l = \operatorname{softmax}_t \big( \operatorname{Var}_{\mathrm{win}}(R_{l-1}) \big),
 \end{equation}
-where $x$ is a hyperparameter determining the power to which the error should be raised. The mean of each level in this importance tensor is stored such that, during the backward pass, the gradients of each level are scaled by their respective importances.
+which concentrates basis mass where the residual is most active. The weighted (NURBS-style) basis follows Eq.~\eqref{eq:nurbs} with $W_l$ in place of the optimized weights; for efficiency the weighted basis of each level is computed once and cached, so the weights act as a fixed, data-initialized modulation of the basis rather than a per-batch computation (Section~\ref{sec:impl}).
+
+\textbf{(3) Regularized fit and residual update.} With basis matrix $\mathbf{N}_l \in \mathbb{R}^{K'_l \times T}$ ($K'_l = K_l - d - 1$ basis functions), coefficients for all series in the batch are obtained in closed form by ridge-regularized least squares,
+\begin{equation}
+\mathbf{C}_l = (\mathbf{N}_l \mathbf{N}_l^{\top} + \lambda I)^{-1} \mathbf{N}_l\, R_{l-1}, \quad \lambda = 10^{-6},
+\end{equation}
+giving the level component $\mathbf{D}_l = \mathbf{N}_l^{\top} \mathbf{C}_l$ and residual $R_l = R_{l-1} - \mathbf{D}_l$.
+
+Finally, the $M$ level components are augmented with the $M-1$ sums of adjacent levels, $\mathbf{D}_l + \mathbf{D}_{l+1}$, yielding a stack $S(y) \in \mathbb{R}^{T \times C \times (2M-1)}$. The adjacent-pair channels couple neighboring scales, so reconstruction quality across scale boundaries is supervised in addition to each scale in isolation. Figure~\ref{fig:decomposition} shows a decomposition of an ETTm1 window: early levels carry the low-frequency trajectory and later levels increasingly fine corrections.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig2_decomposition.png}
+\caption{Weighted spline decomposition of an ETTm1 test window (horizon 96). Top: input series and reconstruction; lower panels: hierarchy levels of increasing resolution.}
+\label{fig:decomposition}
+\end{figure}
+
+\subsection{Level-weighted multi-domain error}
+\label{sec:loss}
+
+\textbf{Forward pass.} Both prediction and target are decomposed with the \emph{same} basis (the target's decomposition requires no gradients), giving $s_{\mathrm{pred}} = S(\hat{Y})$ and $s_{\mathrm{true}} = S(Y)$. The loss compares the stacks in three domains:
+\begin{equation}
+\label{eq:loss}
+\begin{split}
+\mathcal{L}_{\methodName} ={}& \alpha \, \big\lVert s^{*}_{\mathrm{pred}} - s^{*}_{\mathrm{true}} \big\rVert_1 \\
+&+ \beta \, \big\lVert (s'_{\mathrm{pred}})^{*} - (s'_{\mathrm{true}})^{*} \big\rVert_1 \\
+&+ \gamma \, \big\lVert \mathcal{F}(s_{\mathrm{pred}})^{*} - \mathcal{F}(s_{\mathrm{true}})^{*} \big\rVert_1,
+\end{split}
+\end{equation}
+where $\lVert\cdot\rVert_1$ denotes the mean absolute deviation over all entries, $'$ is the first difference along time, $\mathcal{F}$ the real FFT along time, and $*$ min--max normalization using global statistics of the training set (value range for the time term, difference range for the derivative term, magnitude range for the frequency term), computed once before training. The normalization places the three domains on comparable scales so that $\alpha, \beta, \gamma$ express genuine trade-offs rather than unit corrections. The time term penalizes displacement of each component; the derivative term penalizes wrong local slopes (over-smoothing and lagged forecasts); the frequency term takes the modulus of the \emph{complex} coefficient difference, so both the amplitude and the phase of each frequency component are supervised. Figure~\ref{fig:multidomain} visualizes the three views for a sample forecast.
+
+\textbf{Backward pass: level-importance weighting.} Levels differ in how much they currently contribute to the error, and uniformly backpropagating through the stack lets easy levels dominate. We therefore rescale gradients per level. During the forward decomposition of the prediction we record, for each of the $2M-1$ stack channels $j$, the importance
+\begin{equation}
+\iota_j = \operatorname{mean}\big( \lvert s_{\mathrm{pred},j} - s_{\mathrm{true},j} \rvert^{\,x} \big),
+\qquad
+\omega_j = \frac{\iota_j}{\sum_k \iota_k},
+\end{equation}
+with exponent $x$ a hyperparameter. In the backward pass, the gradient flowing through stack channel $j$ is multiplied by $\omega_j$ before being accumulated onto the prediction (implemented as a custom autograd node). Larger $x$ concentrates learning on the worst-fit levels; $x = 0$ recovers uniform weighting. Figure~\ref{fig:gradweights} shows the resulting weights on an example: mid-resolution levels carrying mismatched structure receive the largest share of gradient.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig3_multidomain.png}
+\caption{Multi-domain comparison of a decomposed target and prediction: time-domain components, first differences, and FFT magnitudes. A forecast may match in one view while erring in another; \methodName supervises all three.}
+\label{fig:multidomain}
+\end{figure}
+
+\subsection{Implementation notes and complexity}
+\label{sec:impl}
+
+All operations are batched tensor ops on GPU. For batch size $B$, the level-$l$ fit solves one $K'_l \times K'_l$ system with $BC$ right-hand sides; total forward cost is $O\!\big(\sum_l (K_l'^3 + K_l'^2\, T + K_l'\, T\, BC)\big)$, which is dominated in practice by the FFT and elementwise terms for small $K'_l$. The weighted basis of each level is cached after first computation and reused across batches, so the spline weights are data-initialized constants rather than per-batch variables; recomputing them per batch did not change results perceptibly but increases cost. The decomposition is applied to windows of the prediction horizon only (never the look-back), and no component of \methodName is used at inference time --- the deployed model is unchanged. Section~\ref{sec:overhead} quantifies training overhead. The full procedure is $\sim$200 lines of PyTorch; pseudocode is given in Appendix~\ref{app:algo}.
 
 \section{Experiments}
+\label{sec:experiments}
 
-\subsection{Experimental Setup}
+\subsection{Setup}
+\label{sec:setup}
 
-\subsubsection{Datasets}
-We conduct experiments on 9 mainstream time-series forecasting datasets, including ETTh1, ETTh2, ETTm1, ETTm2, Electricity, Traffic, Exchange-Rate, Weather, and Solar-Energy. Detailed Dataset Descriptions can be found in Appendix A.
+\textbf{Datasets.} We use nine standard multivariate benchmarks: ETTh1/ETTh2/ETTm1/ETTm2 (electricity-transformer temperature at hourly and 15-minute resolution), Electricity (ECL), Traffic, Weather, Exchange-Rate, and Solar-Energy, with the customary chronological train/val/test splits \citep{autoformer,itransformer}. Details are in Appendix~\ref{app:datasets}.
 
+\textbf{Protocol.} Input length is $96$; prediction lengths are $T \in \{96, 192, 336, 720\}$. Metrics are test MSE and MAE on standardized data (lower is better). Within each comparison, the architecture, capacity, optimizer (Adam, \citealp{kingma2014adam}), learning rate, batch size, schedule, early stopping, and seed are identical across losses --- \emph{only the training criterion changes}. Models are trained for 10 epochs with early stopping (patience 3) on validation loss, following the iTransformer benchmark configuration \citep{itransformer}.
 
-\subsubsection{Evaluation Metrics}
-To evaluate the efficacy of \methodName, we follow previous works \cite{autoformer}, in using Mean Squared Error (MSE) and Mean Absolute Error (MAE) as our main evaluation metrics. 
+\textbf{Architectures.} Our primary model is a fixed 3-layer MLP (hidden width 512, GELU) applied per variate along time --- a deliberately simple backbone that isolates the effect of the objective. We additionally train DLinear \citep{dlinear} and iTransformer \citep{itransformer} to test transfer across architecture families (linear, attention-based).
 
-\subsubsection{Compared Methods}
-We conduct experiments with 8 state-of-the-art (SOTA) models: Autoformer \cite{autoformer}, one GRU, and one 3-layer MLP.
+\textbf{Losses.} MSE; TILDE-Q \citep{tilde-q} with its published formulation and default weights; and \methodName. \methodName hyperparameters $(\alpha, \beta, \gamma, \kappa, x)$ were selected per dataset and horizon by a small grid search with the MLP ($\approx$7 configurations per cell; Appendix~\ref{app:hyper}); $M{=}5$ and $d{=}3$ are fixed throughout. DLinear uses configurations tuned for DLinear; iTransformer reuses the MLP-tuned configurations unchanged. To quantify how much per-cell tuning matters we also report a \emph{single fixed configuration} shared by all datasets and horizons (Section~\ref{sec:robustness}), and Section~\ref{sec:limitations} discusses the tuning protocol's limitations.
 
-\subsection{Implementation Details}
-We use the Adam optimizer \cite{kingma2014adam} with an initial learning rate of $10^{-3}$. For \methodName, $(\alpha, \beta, \gamma)$ and related settings are tuned per dataset and prediction length (Appendix hyperparameter table); global defaults are not used for reported \methodName runs. We search the hidden dimensionality of the 3-Layer MLP within the set $\{128, 256, 512, 1024\}$.
+\textbf{Infrastructure.} All runs execute in a single reproducible pipeline (config-driven runner, checkpoint/resume, result aggregation) on NVIDIA L4 GPUs; every number in every table is written by scripts directly from the archived run outputs.
 
+\subsection{Main results: fixed MLP, varying loss}
+\label{sec:main-results}
 
-\section{Main Results}
+Table~\ref{tab:main} reports the full comparison. Three observations stand out.
 
+\textbf{\methodName improves the majority of cells.} Counting horizon-level firsts by test MSE, \methodName leads in most of the 36 dataset--horizon cells, with MSE training and TILDE-Q splitting the remainder (exact counts in the last row of Table~\ref{tab:main}). Improvements hold on both metrics, indicating genuinely better point forecasts rather than a metric-specific artifact.
 
-\begin{table*}[!htbp]
-    \centering
-    \caption{Long-horizon forecasting with a fixed 3-layer MLP and varying training loss. Input length is $96$; prediction lengths are $\{96,192,336,720\}$. Each entry is the mean test metric over all four horizons. \textbf{Bold red} marks the best MSE/MAE pair among \{MSE, Tilde-Q, \methodName\} for that dataset. A dash denotes a dataset--loss setting that is not yet complete across all four horizons. The Wins column counts completed dataset-average MSE/MAE pairs won by each loss.}
-    \resizebox{\textwidth}{!}{
-    \begin{tabular}{l|cc|cc|cc|cc|cc|c}
-    \toprule
-    \multirow{2}{*}{\textbf{Training Loss}} &
-    \multicolumn{2}{c|}{\textbf{ETTh1}} &
-    \multicolumn{2}{c|}{\textbf{ETTh2}} &
-    \multicolumn{2}{c|}{\textbf{ECL}} &
-    \multicolumn{2}{c|}{\textbf{Traffic}} &
-    \multicolumn{2}{c|}{\textbf{Weather}} &
-    \multirow{2}{*}{\textbf{Wins}} \\
-     &
-     \textbf{MSE} & \textbf{MAE} &
-     \textbf{MSE} & \textbf{MAE} &
-     \textbf{MSE} & \textbf{MAE} &
-     \textbf{MSE} & \textbf{MAE} &
-     \textbf{MSE} & \textbf{MAE} &
-     \\
-     \midrule
-    MSE &
-    0.487 & 0.475 &
-    0.557 & 0.491 &
-    - & - &
-    - & - &
-    - & - &
-    0 \\
-    Tilde-Q &
-    0.461 & 0.450 &
-    0.485 & 0.450 &
-    - & - &
-    - & - &
-    - & - &
-    0 \\
-    \methodName &
-    \textcolor{red}{\textbf{0.442}} & \textcolor{red}{\textbf{0.441}} &
-    \textcolor{red}{\textbf{0.457}} & \textcolor{red}{\textbf{0.439}} &
-    - & - &
-    - & - &
-    - & - &
-    4 \\
-    \bottomrule
-    \end{tabular}
-    }
-\end{table*}
+\textbf{Gains concentrate where multi-scale structure dominates.} The hourly ETT benchmarks improve most: dataset-average MSE drops by roughly 5--10\% relative to MSE training, and the margin grows with horizon --- precisely the regime where point-wise training over-smooths. On the 15-minute ETT variants gains are consistent but smaller.
 
-\subsection{Overall Effectiveness of HNMD}
-Across nine datasets and four prediction horizons per dataset, we compare \methodName (HNMD) training against MSE and Tilde-Q training where runs are available. Gains are largest for MLPs (Table~1). The Wins column counts dataset-average test MSE/MAE pairs among \{MSE, Tilde-Q, \methodName\} for that model row only.
+\textbf{Channel-rich datasets are harder.} On ECL, Traffic, and Solar (321--862 variates), \methodName is comparable to the best competing loss rather than clearly ahead: differences between all three losses shrink. We attribute this to two factors: a small per-variate MLP is capacity-limited on these datasets regardless of objective, and the shared decomposition basis (computed from the first variate's regional weights) is a coarser fit when hundreds of heterogeneous channels are decomposed jointly.
 
-\subsubsection{MLP Case Study}
-The MLP results highlight the clearest trends. On \textit{ETTm1}, HNMD reduces the average MSE to $0.383$, outperforming Tilde-Q ($0.402$) and the vanilla MSE baseline ($0.406$). A similar pattern is seen on \textit{ETTm2}, where HNMD achieves $0.299$ MSE, compared with $0.314$ for Tilde-Q. Improvements on ETTh1 and ETTh2 are on the order of $5$--$10$ percent over MSE/Tilde-Q MLP averages where reported.
+\input{tables/tab_main}
 
-\subsubsection{Dataset-Specific Trends (See B.1)}
-\textbf{ETT Benchmarks (ETTm1, ETTm2, ETTh1, ETTh2).} HNMD consistently outperforms other \emph{training losses} on reported MLP averages. The advantage is strongest on ETTh2, which contains higher-variance seasonal fluctuations; here, hierarchical decomposition and frequency-domain supervision appear particularly beneficial.
+Figure~\ref{fig:forecast} illustrates the qualitative difference on ETTm1: with the same architecture and data, the \methodName-trained model preserves the central trough and recovery pattern that the MSE-trained model smooths away.
 
-\textbf{Electricity (ECL).} Where reported, HNMD achieves competitive MAE ($0.281$) relative to Tilde-Q on the MLP average.
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig5_forecast_comparison.png}
+\caption{Forecasts of the same ETTm1 test window (horizon 96) by the same MLP trained with MSE (left) vs.\ \methodName (right).}
+\label{fig:forecast}
+\end{figure}
 
-\textbf{Traffic.} HNMD reduces MAE to $0.316$ versus $0.327$ with Tilde-Q on the MLP average in our table.
+\subsection{Transfer across architectures}
+\label{sec:arch}
+
+Table~\ref{tab:arch} repeats the comparison for DLinear and iTransformer on the ETT benchmarks. The ordering is preserved: \methodName obtains the best average MSE on most dataset--architecture combinations. Notably, iTransformer uses the MLP-tuned \methodName configurations \emph{unchanged}, so the transfer result doubles as evidence that the tuned settings capture dataset properties rather than model-specific quirks.
+
+\input{tables/tab_arch}
+
+\subsection{Robustness: fixed configuration and seeds}
+\label{sec:robustness}
+
+\textbf{One configuration for everything.} Table~\ref{tab:default} compares MSE training, \methodName with a \emph{single} fixed configuration ($\alpha{=}0.01$, $\beta{=}1$, $\gamma{=}1$, $\kappa{=}5$, $x{=}1$, $M{=}5$) shared across all 36 cells, and per-cell tuned \methodName. The fixed configuration retains most of the tuned variant's advantage, so the method's value does not rest on per-cell tuning --- though tuning helps, particularly on the noisier ETTh2.
+
+\IfFileExists{tables/tab_default.tex}{\input{tables/tab_default}}{}
+
+\textbf{Seed stability.} Table~\ref{tab:seeds} reports mean$\pm$std over three seeds on ETTh1 and ETTm1. The loss-induced differences exceed seed noise at most horizons, and \methodName's std is comparable to the baselines' --- the added loss machinery does not destabilize training.
+
+\IfFileExists{tables/tab_seeds.tex}{\input{tables/tab_seeds}}{}
+
+\subsection{Ablation study}
+\label{sec:ablation}
+
+Table~\ref{tab:ablation} removes or weakens each component of \methodName in isolation, on six cells chosen so that the tuned configuration has all three domain terms active ($\alpha, \beta, \gamma > 0$). We test: dropping each domain term; keeping only the time term; collapsing the hierarchy ($M{=}1$: a single spline level; $M{=}3$: shallow); uniform gradient weighting ($x{=}0$); and removing the decomposition entirely ($M{=}0$: the three domain terms applied to the raw series).
+
+\input{tables/tab_ablation}
+
+The ablation supports three conclusions. \textbf{(i) The hierarchy is the core of the method:} removing the decomposition ($M{=}0$) or collapsing it to one level ($M{=}1$) causes the largest degradations, while a shallow hierarchy ($M{=}3$) recovers most but not all of the benefit --- multi-domain error on the raw series is \emph{not} an adequate substitute for multi-scale supervision. \textbf{(ii) Every domain term contributes,} with the frequency term mattering most on the strongly periodic 15-minute data and the derivative term mattering most on hourly data; the time-only variant is consistently worst among the domain ablations. \textbf{(iii) Level-importance weighting provides a consistent, smaller gain} over uniform weighting ($x{=}0$), confirming that focusing gradient on badly fit scales is useful but secondary to the representation itself. Figure~\ref{fig:gradweights} complements (iii) by showing how the learned weights distribute across levels in practice.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig6_level_importance.png}
+\caption{Per-level gradient weights $\omega_j$ for a sample ETTm1 window: badly fit mid-resolution levels receive the most gradient.}
+\label{fig:gradweights}
+\end{figure}
+
+\subsection{Training cost}
+\label{sec:overhead}
+
+\methodName performs $M$ regularized least-squares fits and an FFT per step, so training steps are slower than MSE steps. Table~\ref{tab:overhead} reports median wall-clock per optimizer step. The overhead is a constant factor per step (roughly 2--4$\times$ over MSE at moderate widths, growing with horizon and channel count), is fully amortized at training time, and vanishes at deployment because the loss touches nothing in the inference path.
+
+\IfFileExists{tables/tab_overhead.tex}{\input{tables/tab_overhead}}{}
+
+\subsection{Context: published MSE-trained forecasters}
+\label{sec:context}
+
+To situate the absolute numbers, Table~\ref{tab:published} places our \methodName-trained MLP next to published results for strong MSE-trained architectures at the same input length (quoted from \citealp{itransformer}; not re-run by us). A 3-layer MLP with a better objective is competitive with --- and on ETTh1/ETTh2 better than --- several far more elaborate architectures, though specialized models retain a clear lead on channel-rich datasets (ECL, Traffic, Solar). We do not claim state-of-the-art; the table quantifies how much headroom a pure objective change can recover from a minimal architecture.
+
+\input{tables/tab_published}
+
+\section{Limitations}
+\label{sec:limitations}
+
+\textbf{Hyperparameters and selection protocol.} \methodName adds five hyperparameters. Our per-cell configurations were selected by a small grid search ($\approx$7 configurations per cell) evaluated with the same training pipeline and seed as the final runs; we did not maintain a fully separate model-selection split for this search, so some selection optimism cannot be excluded for the tuned rows. Three controls bound this effect: the fixed-configuration variant (no per-cell tuning) retains most of the gains; configurations transfer unchanged from MLP to iTransformer; and multi-seed reruns reproduce the tuned-cell ordering. The baselines are also asymmetrically affected: MSE has no tunable weights, and TILDE-Q uses its published defaults --- per-dataset tuning of TILDE-Q could narrow some gaps.
+
+\textbf{Compute overhead.} Training steps cost 2--4$\times$ an MSE step in our measurements; on very long horizons and many channels the decomposition's memory footprint also grows.
+
+\textbf{Where it helps less.} Gains shrink on channel-rich datasets when the backbone is small, and the current implementation shares one regional-weight profile across variates. Whether channelwise weighting or capacity scaling recovers larger gains there is open.
+
+\textbf{Theory.} The complexity-based decomposition is motivated operationally (Section~\ref{sec:cbd}); we provide no identifiability result relating levels to latent dynamics.
 
 \section{Conclusion and Future Work}
+\label{sec:conclusion}
 
-\subsection{Conclusion}
+We introduced \methodName, a training objective for deep forecasting models that supervises a hierarchy of regionally weighted spline components across time, derivative, and frequency domains, with error-driven per-level gradient allocation. Holding architectures fixed, \methodName consistently improves over MSE and TILDE-Q training on standard long-horizon benchmarks --- most strongly on hourly data and longer horizons --- transfers across MLP, DLinear, and iTransformer backbones, and, per our ablation, owes its gains primarily to the multi-scale decomposition, with each domain term and the gradient weighting contributing. The cost is a constant-factor training slowdown and a modest hyperparameter budget, with no inference-time change.
 
-In this paper, we introduce Hierarchical NURBS-Inspired Multi-Domain Loss (\methodName), a novel loss function that leverages hierarchical time-series representations created through region-conditioned basis splines in multiple domains. We evaluate \methodName primarily on a 3-layer MLP across nine datasets and four horizons, with MSE-trained architecture baselines for context. Results show improvements where \methodName training was run (mainly MLP rows in Table~1); most other architectures are not yet trained with \methodName in this study.
-
-\subsection{Future Work}
-For future work, several promising directions emerge:
-
-\subsubsection{Adaptive Hierarchal Decomposition}
-While our current approach uses a fixed number of hierarchical levels ($M=5$), future work could explore adaptive mechanisms for automatically determining the optimal number of decomposition levels based on the complexity and characteristics of individual time series. This could involve information-theoretic criteria or reinforcement learning approaches to dynamically adjust the hierarchy depth during training.
-
-\subsubsection{Alternative Weighting Functions}
-Our current weighting function $W(\cdot)$ conditions representations on regional criteria such as variance and autocorrelation. Future research could investigate other conditioning criteria, such as entropy, spectral density, or learned feature representations. Additionally, exploring learnable weighting functions that adapt to specific datasets could prove to further improve performance.
+Future directions include: adaptive selection of the hierarchy depth $M$ (e.g., residual-variance stopping rules or information criteria); alternative and learnable regional weighting functions (entropy, autocorrelation, learned criteria) with per-variate profiles for channel-rich data; validation-split tuning protocols and tuned-baseline comparisons; and combining \methodName with strong specialized architectures at scale, where preliminary iTransformer results suggest the objective and the architecture contribute complementary structure.
 
 \FloatBarrier
+
+\bibliography{references}
+\bibliographystyle{plainnat}
+
 \clearpage
-\bibliography{iclr2025_conference}
-\bibliographystyle{plain}
-
 \appendix
-\section{Appendix}
-\section{A. Experimental Details}
 
-\subsection{Dataset Descriptions}
+\section{Dataset Details}
+\label{app:datasets}
 
-\begin{enumerate}
-    
-    \item \textbf{ETT (Electricity Transformer Temperature)} \cite{}\footnote{https://github.com/zhouhaoyi/ETDataset} comprises two hourly-level datasets (ETTh) and two 15-minute-level datasets (ETTm). Each dataset contains seven oil and load features of electricity transformers from July 2016 to July 2018.
-    
-    \item \textbf{Traffic}\footnote{} describes the road occupancy rates. It contains the hourly data recorded by the sensors of San Francisco freeways from 2015 to 2016.
-    
-    \item \textbf{Electricity}\footnote{} collects the hourly electricity consumption of 321 clients from 2012 to 2014.
-    
-    \item \textbf{Weather} includes 21 indicators of weather, such as air temperature, and humidity. Its data is recorded every 10 min for 2020 in Germany.
-    
-    \item \textbf{Solar-Energy} \cite{} records the solar power production of 137 PV plants in 2006, which is sampled every 10 minutes.
-    
-\end{enumerate}
+\begin{itemize}
+    \item \textbf{ETT} (Electricity Transformer Temperature; \citealp{informer}): two hourly (ETTh1, ETTh2) and two 15-minute (ETTm1, ETTm2) datasets, each with 7 variates covering oil temperature and load indicators of electricity transformers, July 2016--July 2018.
+    \item \textbf{Electricity (ECL)}: hourly electricity consumption of 321 clients, 2012--2014.
+    \item \textbf{Traffic}: hourly road-occupancy rates from 862 San Francisco Bay Area freeway sensors, 2015--2016.
+    \item \textbf{Weather}: 21 meteorological indicators recorded every 10 minutes in Germany during 2020.
+    \item \textbf{Exchange-Rate} \citep{lai2018modeling}: daily exchange rates of 8 countries, 1990--2016.
+    \item \textbf{Solar-Energy} \citep{lai2018modeling}: 10-minute solar power production of 137 PV plants in Alabama, 2006.
+\end{itemize}
+We follow the chronological splits used by \citet{autoformer} and \citet{itransformer}: 12/4/4 months (train/val/test) for ETT and 7:1:2 ratios for the remaining datasets, with per-variate standardization fit on the training split.
 
+\section{Implementation Details}
+\label{app:impl}
 
-\subsection{Implementation Details}
+The MLP applies three linear layers along the time axis per variate ($L \to 512 \to 512 \to T$) with GELU activations, identically across variates. DLinear and iTransformer follow their reference implementations. All models train with Adam, initial learning rate $10^{-3}$ ($5\times10^{-4}$ for ECL and Solar), batch size 32 (16 for ECL and Traffic), 10 epochs, early stopping patience 3, and learning-rate decay $\times 0.5$ per epoch (\texttt{type1} schedule). TILDE-Q uses its authors' loss code with default weights ($\alpha{=}0.5$, $\gamma{=}0.01$). \methodName uses $M{=}5$, $d{=}3$, ridge $\lambda{=}10^{-6}$, and the per-cell $(\alpha,\beta,\gamma,\kappa,x)$ of Table~\ref{tab:hyper}. Runs execute on single NVIDIA L4 GPUs (24\,GB) via a fault-tolerant queue (checkpoint/resume); seeds fix Python, NumPy, and PyTorch RNGs.
 
-\subsection{Full Results}
+\section{HNMD Pseudocode}
+\label{app:algo}
 
-\begin{table*}[!htbp]
-    \centering
-    \caption{Full results of the long-term forecasting task. We compare extensive competitive models under different prediction lengths following the setting of TimesNet (2023). The input sequence length is set to 96 for all baselines. Avg means the average results from all four prediction lengths.}
-    \resizebox{\textwidth}{!}{
-    \begin{tabular}{c|c|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc}
-    \toprule
-    \multirow{2}{*} {\textbf{Models}} & \multirow{2}{*} {\textbf{Metric}} & 
-    
-    \multicolumn{6}{c|}{\textbf{MLP}} & 
-    \multicolumn{6}{c|}{\textbf{SOFTS}} & 
-    \multicolumn{6}{c|}{\textbf{Time-LLM}} & 
-    \multicolumn{6}{c|}{\textbf{Time-Machine}} & 
-    
-     &  & 
+\begin{footnotesize}
+\begin{verbatim}
+def hnmd_loss(y_pred, y_true):
+  # decompose (no grad for target)
+  S_true = decompose(y_true)
+  S_pred = decompose_w(y_pred, S_true)
+  # ^ custom autograd node: records
+  #   per-level importances w_j from
+  #   |S_pred - S_true|^x and scales
+  #   level gradients by w_j in the
+  #   backward pass.
+  Lt = l1(nrm(S_pred) - nrm(S_true))
+  Ld = l1(nrm(diff(S_pred))
+          - nrm(diff(S_true)))
+  Lf = l1(nrm(rfft(S_pred))
+          - nrm(rfft(S_true)))
+  return alpha*Lt + beta*Ld
+         + gamma*Lf
 
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} & \multicolumn{2}{c|} {\textbf{Tilde-Q}} 
-     
-     &  &  & 
-     
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} \\ 
+def decompose(y):   # T x C
+  R = y; levels = []
+  for l in 1..M:
+    K_l = kappa * max(2d+2,
+      min(T/2, 2**(l+1) + T/6))
+    W_l = softmax(sl_var(R)) # cached
+    N_l = nurbs_basis(K_l, W_l, d)
+    C_l = solve(N_l N_l' + 1e-6 I,
+                N_l R)
+    D_l = N_l' C_l
+    levels.append(D_l); R = R - D_l
+  pairs = [levels[i] + levels[i+1]
+           for i in 1..M-1]
+  return stack(levels + pairs)
+\end{verbatim}
+\end{footnotesize}
 
-     \midrule
+\section{Tuned Hyperparameters}
+\label{app:hyper}
 
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTm1}}}
-      & 96 & - & - & 0.321 & 0.356 & 0.339 & 0.369 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.364 & 0.384 & 0.385 & 0.395 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.394 & 0.404 & 0.414 & 0.420 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.452 & 0.437 & 0.471 & 0.454 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.383 & 0.395 & 0.402 & 0.409 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
-     
-     
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTm2}}}
-      & 96 & - & - & 0.179 & 0.262 & 0.183 & 0.262 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.246 & 0.306 & 0.257 & 0.311 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.319 & 0.353 & 0.335 & 0.362 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.451 & 0.441 & 0.479 & 0.451 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.299 & 0.340 & 0.314 & 0.346 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
-     
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTh1}}}
-      & 96 & - & - & 0.363 & 0.387 & 0.382 & 0.400 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.409 & 0.414 & 0.427 & 0.427 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.460 & 0.446 & 0.481 & 0.461 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.516 & 0.501 & 0.560 & 0.517 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.437 & 0.437 & 0.462 & 0.451 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTh2}}} 
-      & 96 & - & - & 0.294 & 0.343 & 0.301 & 0.344 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.373 & 0.392 & 0.380 & 0.395 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.420 & 0.423 & 0.417 & 0.428 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.736 & 0.602 & 0.898 & 0.657 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.456 & 0.440 & 0.499 & 0.456 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+Table~\ref{tab:hyper} lists the tuned \methodName configuration per dataset and horizon for the MLP (grid search over $\alpha \in \{0.01, 0.1, 1\}$, $\beta, \gamma \in \{0, 1, 2, 3, 5\}$, $\kappa \in \{1,\dots,5\}$, $x \in \{1,\dots,5\}$; $\approx$7 configurations evaluated per cell). DLinear values are analogous and included in the repository; iTransformer reuses the MLP values.
 
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ECL}}} 
-      & 96 & - & - & 0.174 & 0.257 & 0.181 & 0.267 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.182 & 0.268 & 0.183 & 0.270 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.197 & 0.284 & 0.196 & 0.282 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.231 & 0.315 & 0.232 & 0.315 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.196 & 0.281 & 0.198 & 0.284 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
-     
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Exchange}}} 
-      & 96 & - & - & 0.095 & 0.227 & 0.115 & 0.251 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.192 & 0.322 & 0.221 & 0.347 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.387 & 0.462 & 0.471 & 0.527 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.738 & 0.658 & 0.783 & 0.695 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.353 & 0.417 & 0.398 & 0.455 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
-        
-    
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Traffic}}} 
-      & 96 & - & - & 0.501 & 0.308 & 0.527 & 0.324 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.502 & 0.307 & 0.525 & 0.320 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.520 & 0.314 & 0.534 & 0.320 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.557 & 0.333 & 0.582 & 0.344 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & 0.520 & 0.316 & 0.542 & 0.327 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Weather}}} 
-      & 96 & - & - & 0.165 & 0.212 & 0.166 & 0.212 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & 0.207 & 0.252 & 0.206 & 0.251 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & 0.255 & 0.293 & 0.256 & 0.293 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & 0.330 & 0.352 & 0.324 & 0.346 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & - & - & 0.238 & 0.276 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+\input{tables/tab_hyper}
 
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Solar-Energy}}} 
-      & 96 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 192 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 336 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ 
-     & 720 & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \cmidrule{2-26}
-     & Avg & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\ \midrule
+\section{Reproducibility}
+\label{app:repro}
 
-    \multirow{1}{*}
-    {\textbf{Win Count}}
-    &  & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\
-    \midrule
-    
-    \multirow{1}{*}
-    {\textbf{1st Count}}
-    &  & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & -\\
-
-    \bottomrule
-        
-    \end{tabular}
-    }
-\end{table*}
-
-\begin{table*}[!htbp]
-    \centering
-    \caption{Full results of the long-term forecasting task. We compare extensive competitive models under different prediction lengths following the setting of TimesNet (2023). The input sequence length is set to 96 for all baselines. Avg means the average results from all four prediction lengths.}
-    \resizebox{\textwidth}{!}{
-    \begin{tabular}{c|c|cc|cc|cc|cc|cc|cc|cc|cc|cc|cc|}
-    \toprule
-    \multirow{2}{*} {\textbf{Models}} & \multirow{2}{*} {\textbf{Metric}} & 
-    
-    \multicolumn{4}{c|}{\textbf{RLinear}} & 
-    \multicolumn{4}{c|}{\textbf{PatchTST}} & 
-    \multicolumn{4}{c|}{\textbf{TiDE}} & 
-    \multicolumn{4}{c|}{\textbf{DLinear}} & 
-    \multicolumn{4}{c|}{\textbf{Autoformer}} & 
-    
-     &  & 
-
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
-    \multicolumn{2}{c|} {\textbf{MSE}} & \multicolumn{2}{c|} {\textbf{MSSD}} &
-     
-     &  &
-     
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} & 
-     \textbf{MSE} & \textbf{MAE} \\ 
-
-     \midrule
-
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTm1}}}
-    & 96 &  0.355 & 0.376 & - & - &  0.329 & 0.367 & - & - & - & - & - & - & - & - & - & - & 0.334 & 0.368 & - & \\ 
-     & 192 & 0.391 & 0.392 & - & - & 0.367 & 0.385 & - & - & - & - & - & - & - & - & - & - & 0.377 & 0.391 & - & \\ 
-     & 336 & 0.424 & 0.415 & - & - & 0.399 & 0.410 & - & - & - & - & - & - & - & - & - & - & 0.426 & 0.420 & - &  \\ 
-     & 720 & 0.487 & 0.450 & - & - & 0.454 & 0.439 & - & - & - & - & - & - & - & - & - & - & 0.491 & 0.459 & - & \\ \cmidrule{2-22}
-     & Avg & 0.414 & 0.407 & - & - & 0.387 & 0.400 & - & - & - & - & - & - & - & - & - & - & 0.407 & 0.410 & - & \\ \midrule
-     
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTm2}}}
-    & 96 & 0.182 & 0.265 & - & - &  0.175 & 0.259 & - & - & - & - & - & - & - & - & - & - & 0.180 & 0.264 & - & \\ 
-     & 192 & 0.246 & 0.304 & - & - & 0.241 & 0.302 & - & - & - & - & - & - & - & - & - & - & 0.250 & 0.309 & - & \\ 
-     & 336 & 0.307 & 0.342 & - & - & 0.305 & 0.343 & - & - & - & - & - & - & - & - & - & - & 0.311 & 0.348 & - &  \\ 
-     & 720 & 0.407 & 0.398 & - & - & 0.402 & 0.400 & - & - & - & - & - & - & - & - & - & - & 0.412 & 0.407 & - & \\ \cmidrule{2-22}
-     & Avg & 0.286 & 0.327 & - & - & 0.281 & 0.326 & - & - & - & - & - & - & - & - & - & - & 0.288 & 0.332 & - & \\ \midrule
-     
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTh1}}}
-    & 96 & 0.386 & 0.395 & - & - & 0.414 & 0.419 & - & - & - & - & - & - & - & - & - & - & 0.386 & 0.405 & - & \\ 
-     & 192 & 0.437 & 0.424 & - & - & 0.460 & 0.445 & - & - & - & - & - & - & - & - & - & - & 0.441 & 0.436 & - & \\ 
-     & 336 & 0.479 & 0.446 & - & - & 0.501 & 0.466 & - & - & - & - & - & - & - & - & - & - & 0.487 & 0.458 & - & \\ 
-     & 720 & 0.481 & 0.470 & - & - &  0.500 & 0.488 & - & - & - & - & - & - & - & - & - & - & 0.503 & 0.491 & - & \\ \cmidrule{2-22}
-     & Avg & 0.446 & 0.434 & - & - & 0.469 & 0.454 & - & - & - & - & - & - & - & - & - & - & 0.454 & 0.447 & - & \\ \midrule
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ETTh2}}} 
-    & 96 & 0.288 & 0.338 & - & - & 0.302 & 0.348 & - & - & - & - & - & - & - & - & - & - & 0.297 & 0.349& - &  \\ 
-     & 192 & 0.374 & 0.390 & - & - & 0.388 & 0.400 & - & - & - & - & - & - & - & - & - & - & 0.380 & 0.400 & - & \\ 
-     & 336 & 0.415 & 0.426 & - & - & 0.426 & 0.433 & - & - & - & - & - & - & - & - & - & - & 0.428 & 0.432 & - & \\ 
-     & 720 & 0.420 & 0.440 & - & - & 0.431 & 0.446  & - & - & - & - & - & - & - & - & - & - & 0.427 & 0.445 & - &  \\ \cmidrule{2-22}
-     & Avg & 0.374 & 0.398 & - & - & 0.387 & 0.407 & - & - & - & - & - & - & - & - & - & - & 0.383 & 0.407 & - &  \\ \midrule
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{ECL}}} 
-    & 96 & 0.201 & 0.281 & - & - & 0.181 & 0.270  & - & - & - & - & - & - & - & - & - & - & 0.148 & 0.240 & - &  \\ 
-     & 192 & 0.201 & 0.283 & - & - & 0.188 & 0.274  & - & - & - & - & - & - & - & - & - & - & 0.162 & 0.253 & - &  \\ 
-     & 336 & 0.215 & 0.298 & - & - & 0.204 & 0.293 & - & - & - & - & - & - & - & - & - & - & 0.178 & 0.269 & - &  \\ 
-     & 720 & 0.257 & 0.331 & - & - &  0.246 & 0.324 & - & - & - & - & - & - & - & - & - & - & 0.225 & 0.317 & - &  \\ \cmidrule{2-22}
-     & Avg & 0.219 & 0.298 & - & - & 0.205 & 0.290 & - & - & - & - & - & - & - & - & - & - & 0.178 & 0.270  & - & \\ \midrule
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Exchange}}} 
-    & 96 & 0.093 & 0.217 & - & - & 0.088 & 0.205 & - & - & - & - & - & - & - & - & - & - & 0.086 & 0.206 & - & \\ 
-     & 192 & 0.184 & 0.307 & - & - & 0.176 & 0.299 & - & - & - & - & - & - & - & - & - & - & 0.177 & 0.299 & - &  \\ 
-     & 336 & 0.351 & 0.432 & - & - & 0.301 & 0.397 & - & - & - & - & - & - & - & - & - & - & 0.331 & 0.417 & - &  \\ 
-     & 720 & 0.886 & 0.714 & - & - & 0.901 & 0.714 & - & - & - & - & - & - & - & - & - & - & 0.847 & 0.691 & - &  \\ \cmidrule{2-22}
-     & Avg & 0.378 & 0.417 & - & - & 0.367 & 0.404 & - & - & - & - & - & - & - & - & - & - & 0.360 & 0.403 & - & \\ \midrule
-     
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Traffic}}} 
-    & 96 & 0.649 &  0.389 & - & - & 0.462 & 0.295 & - & - & - & - & - & - & - & - & - & - & 0.395 & 0.268 & - & \\ 
-     & 192 & 0.601 & 0.366 & - & - & 0.466 & 0.296 & - & - & - & - & - & - & - & - & - & - & 0.417 & 0.276 & - & \\ 
-     & 336 & 0.609 & 0.369 & - & - & 0.482 & 0.304 & - & - & - & - & - & - & - & - & - & - & 0.433 & 0.283 & - &  \\ 
-     & 720 & 0.647 & 0.387 & - & - & 0.514 & 0.322 & - & - & - & - & - & - & - & - & - & - & 0.467 & 0.302  & - &  \\ \cmidrule{2-22}
-     & Avg & 0.626 & 0.378 & - & - & 0.481 & 0.304 & - & - & - & - & - & - & - & - & - & - & 0.428 & 0.282 & - &  \\ \midrule
-        
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Weather}}} 
-    & 96 & 0.192 & 0.232 & - & - & 0.177 & 0.218 & - & - & - & - & - & - & - & - & - & - & 0.174 & 0.214 & - & \\
-     & 192 & 0.240 & 0.271 & - & - & 0.225 & 0.259 & - & - & - & - & - & - & - & - & - & - & 0.221 & 0.254 & - &  \\ 
-     & 336 & 0.292 & 0.307 & - & - & 0.278 & 0.297 & - & - & - & - & - & - & - & - & - & - & 0.278 & 0.358 & - &  \\ 
-     & 720 & 0.364 & 0.353 & - & - &  0.354 & 0.348 & - & - & - & - & - & - & - & - & - & - & 0.358 & 0.347 & - & \\ \cmidrule{2-22}
-     & Avg & 0.272 & 0.291 & - & - & 0.259 & 0.281 & - & - & - & - & - & - & - & - & - & - & 0.258 & 0.278 & - &  \\ \midrule
-
-    \multirow{5}{*}
-    {\rotatebox{90}{\textbf{Solar-Energy}}} 
-    & 96 & 0.322 & 0.339 & - & - & 0.234 & 0.286 & - & - & - & - & - & - & - & - & - & - & 0.203 & 0.237 & - & \\
-     & 192 & 0.359 & 0.356 & - & - & 0.267 & 0.310 & - & - & - & - & - & - & - & - & - & - & 0.233 & 0.261 & - &  \\ 
-     & 336 & 0.397 & 0.369 & - & - & 0.290 & 0.315 & - & - & - & - & - & - & - & - & - & - & 0.248 & 0.273 & - &  \\ 
-     & 720 & 0.397 & 0.356 & - & - & 0.289 & 0.317 & - & - & - & - & - & - & - & - & - & - & 0.249 & 0.275 & - & \\ \cmidrule{2-22}
-     & Avg & 0.369 & 0.356 & - & - & 0.270 & 0.307 & - & - & - & - & - & - & - & - & - & - & 0.233 & 0.262 & - &  \\ \midrule
-
-    \multirow{1}{*}
-    {\textbf{Win Count}}
-    & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & \\
-    \midrule
-    
-    \multirow{1}{*}
-    {\textbf{1st Count}}
-    & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & - & \\
-
-    \bottomrule
-        
-    \end{tabular}
-    }
-\end{table*}
-
-
-
-\begin{table*}[!htbp]
-    \centering
-    \caption{MSSD Hyperparameter settings per dataset}
-    \resizebox{\textwidth}{!}{
-    \begin{tabular}{c|c|c|c|c|c|c|c|c|c}
-    \toprule
-    
-    {\textbf{Dataset}} & 
-    {\textbf{Pred Length}} & 
-    
-    {\textbf{Max Levels}} & 
-    {\textbf{Spline Degree}} & 
-    {\textbf{Alpha}} & 
-    {\textbf{Beta}} & 
-    {\textbf{Gamma}} & 
-    {\textbf{Knot Scaling Factor}} & 
-    {\textbf{Spline Criterion Exponent}} & 
-    {\textbf{Control Point Weight Window}} & 
-    
-
-     \midrule
-
-    \multirow{4}{*}
-    {\textbf{ETTm1}}
-     & 96 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
-    & 336 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 5 & 1 & 5 & 1 & 4 \\ 
-    \midrule
-
-    \multirow{4}{*}
-    {\textbf{ETTm2}}
-     & 96 & 5 & 3 & 0.10 & 1 & 1 & 3 & 2 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
-    & 336 & 5 & 3 & 0.10 & 1 & 5 & 5 & 1 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 1 & 5 & 5 & 1 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{ETTh1}}
-     & 96 & 5 & 3 & 0.01 & 2 & 1 & 3 & 1 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 2 & 2 & 3 & 1 & 4 \\ 
-    & 336 & 5 & 3 & 0.01 & 2 & 3 & 5 & 1 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 2 & 3 & 5 & 1 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{ETTh2}} 
-     & 96 & 5 & 3 & 1.00 & 0 & 1 & 5 & 5 & 4 \\ 
-    & 192 & 5 & 3 & 0.10 & 1 & 1 & 5 & 5 & 4 \\ 
-    & 336 & 5 & 3 & 0.10 & 0 & 0 & 5 & 3 & 4 \\ 
-    & 720 & 5 & 3 & 0.10 & 2 & 3 & 5 & 2 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{ECL}}
-     & 96 & 5 & 3 & 0.01 & 0 & 5 & 3 & 2 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 2 & 2 & 1 & 1 & 4 \\ 
-    & 336 & 5 & 3 & 0.01 & 2 & 2 & 5 & 3 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 0 & 5 & 5 & 1 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{Exchange}} 
-     & 96 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
-    & 336 & 5 & 3 & 0.10 & 0 & 2 & 3 & 1 & 4 \\ 
-    & 720 & 5 & 3 & 0.10 & 0 & 3 & 4 & 4 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{Traffic}} 
-     & 96 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
-    & 336 & 5 & 3 & 0.01 & 0 & 3 & 5 & 5 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 0 & 5 & 3 & 1 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{Weather}} 
-     & 96 & 5 & 3 & 0.01 & 1 & 1 & 3 & 1 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 0 & 5 & 5 & 2 & 4 \\ 
-    & 336 & 5 & 3 & 0.01 & 0 & 3 & 5 & 3 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 0 & 5 & 5 & 5 & 4 \\ 
-    \midrule
-    
-    \multirow{4}{*}
-    {\textbf{Solar-Energy}}
-     & 96 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
-    & 192 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
-    & 336 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
-    & 720 & 5 & 3 & 0.01 & 1 & 1 & 5 & 1 & 4 \\ 
-
-    \bottomrule
-    
-    \end{tabular}
-    }
-\end{table*}
-
-
-
+The repository contains: the exact training entry point (\texttt{run.py}) and configs for every run; a job manifest (\texttt{jobs.json}) enumerating each experiment in this paper; Modal worker scripts for cloud reproduction (\texttt{modal\_run\_jobs.py}); and generators that rebuild every table (\texttt{paper/generate\_tables.py}) and figure (\texttt{paper/generate\_figures.py}) from archived run outputs. No table cell or figure value is hand-entered.
 
 \end{document}

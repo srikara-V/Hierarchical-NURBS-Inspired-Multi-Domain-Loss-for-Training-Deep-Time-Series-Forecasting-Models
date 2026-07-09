@@ -1,0 +1,92 @@
+\begin{table}[!t]
+    \centering
+    \caption{Multivariate long-horizon forecasting with a fixed 3-layer MLP trained under each loss. Input length is 96 and results are test-set MSE/MAE (lower is better) with prediction lengths $\{96,192,336,720\}$; Avg is the mean over the four horizons. \textbf{Bold} marks the best value in each row. The final row counts horizon-level firsts by test MSE / MAE across all 20 completed dataset--horizon cells.}
+    \label{tab:main}
+    \scriptsize
+    \setlength{\tabcolsep}{2.6pt}
+    \renewcommand{\arraystretch}{0.9}
+    \begin{tabular}{c|c|cc|cc|cc}
+    \toprule
+    \multicolumn{2}{c|}{Training loss} &
+    \multicolumn{2}{c|}{MSE} &
+    \multicolumn{2}{c|}{TILDE-Q} &
+    \multicolumn{2}{c}{HNMD (ours)} \\
+    \multicolumn{2}{c|}{Metric} &
+    MSE & MAE & MSE & MAE & MSE & MAE \\
+    \midrule
+\multirow{5}{*}{\rotatebox{90}{ETTm1}}
+ & 96 & 0.347 & 0.381 & 0.347 & 0.372 & \textbf{0.327} & \textbf{0.364} \\
+ & 192 & 0.379 & 0.401 & 0.386 & 0.397 & \textbf{0.366} & \textbf{0.383} \\
+ & 336 & 0.429 & 0.442 & 0.420 & 0.423 & \textbf{0.402} & \textbf{0.409} \\
+ & 720 & 0.473 & 0.466 & 0.467 & 0.452 & \textbf{0.459} & \textbf{0.448} \\
+ \cmidrule(lr){2-8}
+ & Avg & 0.407 & 0.422 & 0.405 & 0.411 & \textbf{0.389} & \textbf{0.401} \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ETTm2}}
+ & 96 & 0.192 & 0.277 & \textbf{0.184} & \textbf{0.263} & 0.190 & 0.277 \\
+ & 192 & 0.266 & 0.328 & 0.253 & 0.309 & \textbf{0.251} & \textbf{0.308} \\
+ & 336 & 0.390 & 0.407 & \textbf{0.350} & \textbf{0.373} & 0.352 & 0.386 \\
+ & 720 & 0.533 & 0.493 & \textbf{0.508} & \textbf{0.468} & -- & -- \\
+ \cmidrule(lr){2-8}
+ & Avg & 0.345 & 0.376 & \textbf{0.324} & \textbf{0.353} & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ETTh1}}
+ & 96 & 0.394 & 0.412 & 0.381 & 0.400 & \textbf{0.369} & \textbf{0.393} \\
+ & 192 & 0.435 & 0.437 & \textbf{0.430} & 0.430 & 0.430 & \textbf{0.429} \\
+ & 336 & 0.510 & 0.493 & 0.483 & 0.460 & \textbf{0.461} & \textbf{0.446} \\
+ & 720 & 0.607 & 0.557 & 0.551 & 0.513 & \textbf{0.507} & \textbf{0.497} \\
+ \cmidrule(lr){2-8}
+ & Avg & 0.487 & 0.475 & 0.461 & 0.450 & \textbf{0.442} & \textbf{0.441} \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ETTh2}}
+ & 96 & 0.324 & 0.378 & 0.303 & 0.344 & \textbf{0.302} & \textbf{0.343} \\
+ & 192 & 0.417 & 0.428 & 0.377 & 0.396 & \textbf{0.375} & \textbf{0.391} \\
+ & 336 & 0.496 & 0.484 & \textbf{0.412} & \textbf{0.425} & 0.444 & 0.437 \\
+ & 720 & 0.992 & 0.674 & 0.847 & 0.633 & \textbf{0.708} & \textbf{0.587} \\
+ \cmidrule(lr){2-8}
+ & Avg & 0.557 & 0.491 & 0.485 & 0.450 & \textbf{0.457} & \textbf{0.439} \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{ECL}}
+ & 96 & \textbf{0.174} & 0.262 & 0.182 & 0.268 & 0.176 & \textbf{0.259} \\
+ & 192 & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-8}
+ & Avg & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{Exchange}}
+ & 96 & 0.126 & 0.255 & 0.104 & 0.236 & \textbf{0.101} & \textbf{0.235} \\
+ & 192 & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-8}
+ & Avg & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{Traffic}}
+ & 96 & \textbf{0.494} & 0.308 & 0.515 & 0.320 & 0.495 & \textbf{0.303} \\
+ & 192 & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-8}
+ & Avg & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{Weather}}
+ & 96 & 0.169 & 0.225 & 0.166 & \textbf{0.212} & \textbf{0.165} & 0.212 \\
+ & 192 & -- & -- & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-8}
+ & Avg & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multirow{5}{*}{\rotatebox{90}{Solar-Energy}}
+ & 96 & \textbf{0.228} & \textbf{0.281} & 0.254 & 0.307 & 0.246 & 0.289 \\
+ & 192 & \textbf{0.250} & \textbf{0.297} & -- & -- & -- & -- \\
+ & 336 & -- & -- & -- & -- & -- & -- \\
+ & 720 & -- & -- & -- & -- & -- & -- \\
+ \cmidrule(lr){2-8}
+ & Avg & -- & -- & -- & -- & -- & -- \\
+\midrule
+\multicolumn{2}{c|}{$1^{\text{st}}$ count (MSE/MAE)} & \multicolumn{2}{c|}{3 / 1} & \multicolumn{2}{c|}{4 / 4} & \multicolumn{2}{c}{13 / 15} \\
+    \bottomrule
+    \end{tabular}
+\end{table}
