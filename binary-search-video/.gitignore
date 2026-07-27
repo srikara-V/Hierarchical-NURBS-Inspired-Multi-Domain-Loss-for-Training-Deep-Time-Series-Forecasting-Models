@@ -1,0 +1,10 @@
+out/cache/
+out/stills/
+out/part_*.mp4
+out/concat.txt
+out/video_noaudio.mp4
+out/narration.wav
+out/frame_*.png
+out_tts.log
+out_render.log
+__pycache__/
