@@ -81,6 +81,34 @@ def mix_audio(tl, res, path):
         w.writeframes(pcm.tobytes())
 
 
+def sweep(step=4):
+    """Draw every Nth frame (no encode) to flush out frame-exact crashes."""
+    tl, _ = timeline(fake=False)
+    n_frames = int(tl.duration * engine.FPS)
+    workers = max(1, (os.cpu_count() or 4))
+
+    def part(w):
+        for f in range(w * step, n_frames, workers * step):
+            try:
+                tl.draw(f / engine.FPS)
+            except Exception as e:
+                print(f"CRASH at frame {f} (t={f / engine.FPS:.2f}s): {e}",
+                      flush=True)
+                raise
+
+    import multiprocessing as mp
+    procs = [mp.Process(target=part, args=(w,)) for w in range(workers)]
+    for p in procs:
+        p.start()
+    bad = 0
+    for p in procs:
+        p.join()
+        bad += (p.exitcode != 0)
+    print("sweep:", "FAILED" if bad else f"clean ({n_frames // step} frames)")
+    if bad:
+        sys.exit(1)
+
+
 def render():
     tl, res = timeline(fake=False)
     n_frames = int(tl.duration * engine.FPS)
@@ -163,5 +191,7 @@ if __name__ == "__main__":
         still_at(float(sys.argv[2]), fake=fake)
     elif mode == "render":
         render()
+    elif mode == "sweep":
+        sweep()
     elif mode == "grid":
         export_grid()

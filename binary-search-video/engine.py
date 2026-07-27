@@ -163,9 +163,12 @@ def sline(d, p0, p1, color, w=4, seed=1.0, prog=1.0, amp=2.0):
 def srect(d, xy, wh, color, w=4, seed=1.0, prog=1.0, fill=None, amp=2.0):
     x, y = xy
     ww, hh = wh
-    if fill is not None:
+    if ww < 3 or hh < 3:
+        return
+    if fill is not None and ww > 6 and hh > 6:
         d.rounded_rectangle([S(x + 2), S(y + 2), S(x + ww - 2), S(y + hh - 2)],
-                            radius=S(6), fill=fill)
+                            radius=S(min(6, (min(ww, hh) - 4) / 2)),
+                            fill=fill)
     pts = [(x, y), (x + ww, y), (x + ww, y + hh), (x, y + hh), (x, y)]
     spoly(d, pts, color, w, seed, prog, amp)
 
